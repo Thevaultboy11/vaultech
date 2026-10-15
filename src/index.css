@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: 126 200 227;
+  --accent-hover: 91 184 217;
+  --pad: 20px;
+  color-scheme: dark;
+}
+:root[data-density='compact'] {
+  --pad: 14px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #0b0b0f;
+  color: #f4f4f5;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.3);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #26262f transparent;
+}
+
+@layer components {
+  .card {
+    @apply rounded-card bg-surface border border-line/70 shadow-soft;
+    padding: var(--pad);
+  }
+  .label {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-ink3;
+  }
+  .input {
+    @apply w-full rounded-xl bg-bg border border-line px-3 py-2 text-sm text-ink placeholder:text-ink3 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/15;
+  }
+  .select {
+    @apply rounded-full bg-surface border border-line pl-3 pr-8 py-1.5 text-xs text-ink2 outline-none transition hover:border-ink3/40 focus:border-accent/60 appearance-none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717A' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+  }
+}
+
+/* Let grid items shrink below their content width (prevents mobile overflow) */
+.grid > * {
+  min-width: 0;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.6);
+}
