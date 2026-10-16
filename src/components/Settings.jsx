@@ -1,4 +1,6 @@
-import { CalendarDays, Download, GraduationCap, HardDrive, RotateCcw, Smartphone, Trash2, Upload, Webhook } from 'lucide-react';
+import { CalendarDays, Cloud, Copy, Download, Eye, EyeOff, GraduationCap, HardDrive, Link2, RefreshCw, RotateCcw, Smartphone, Trash2, Upload, Webhook } from 'lucide-react';
+import { validKey } from '../lib/cloud/sync';
+import { SYNC_LABEL } from './layout/SyncBadge';
 import { useRef, useState } from 'react';
 import { TODAY, fmtDur } from '../lib/dates';
 import { STORAGE_KEY, useApp } from '../store';
@@ -38,8 +40,155 @@ const PROFILE_FIELDS = [
   { k: 'role', label: 'Role', ph: 'e.g. Sales & marketing intern' },
 ];
 
+function CloudCard() {
+  const { cloud, toast } = useApp();
+  const [show, setShow] = useState(false);
+  const [joinKey, setJoinKey] = useState('');
+  const [confirm, setConfirm] = useState(null); // 'join' | 'fresh' | 'off'
+  const s = cloud.status;
+  const masked = cloud.vault ? `${cloud.vault.slice(0, 6)}${'•'.repeat(14)}${cloud.vault.slice(-4)}` : '';
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cloud.vault);
+      toast('Vault key copied', { sub: 'Paste it on your other device in Settings → Cloud sync.' });
+    } catch {
+      setShow(true);
+      toast('Couldn’t copy automatically', { sub: 'The key is shown — select and copy it.', tone: 'warning' });
+    }
+  };
+
+  if (!cloud.configured) return null;
+
+  return (
+    <Card className="mb-4" accent={!!cloud.vault}>
+      <CardHeader title="Cloud sync" icon={Cloud} sub={`Saves everything to ${cloud.backendName} and keeps your devices in sync. No sign-in.`} />
+      <Row
+        label={
+          <span className="inline-flex items-center gap-2">
+            <span
+              className={cx(
+                'h-2 w-2 rounded-full',
+                s === 'synced' ? 'bg-success' : s === 'error' ? 'bg-danger' : s === 'off' || s === 'offline' ? 'bg-ink3' : 'bg-accent animate-pulse'
+              )}
+            />
+            {SYNC_LABEL[s]}
+          </span>
+        }
+        hint={
+          cloud.error ? (
+            <span className="text-danger">{cloud.error}</span>
+          ) : cloud.vault ? (
+            cloud.lastSyncedAt ? `Last synced ${cloud.lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Changes upload a moment after you make them.'
+          ) : (
+            'This device only saves locally.'
+          )
+        }
+      >
+        {cloud.vault ? (
+          <Button variant="outline" size="sm" icon={RefreshCw} onClick={cloud.syncNow}>
+            Sync now
+          </Button>
+        ) : (
+          <Button size="sm" icon={Cloud} onClick={cloud.enable}>
+            Turn on
+          </Button>
+        )}
+      </Row>
+
+      {cloud.vault && (
+        <Row label="Your vault key" hint="Works like a password for your data. Use it to connect your other devices — don’t share it.">
+          <div className="flex items-center gap-1.5">
+            <code className="max-w-[220px] truncate rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-[11.5px] text-ink2 sm:max-w-[260px]">
+              {show ? cloud.vault : masked}
+            </code>
+            <button onClick={() => setShow((v) => !v)} className="rounded-full p-1.5 text-ink3 hover:bg-white/[0.05] hover:text-ink" aria-label={show ? 'Hide key' : 'Show key'}>
+              {show ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+            <button onClick={copy} className="rounded-full p-1.5 text-ink3 hover:bg-white/[0.05] hover:text-ink" aria-label="Copy key">
+              <Copy size={14} />
+            </button>
+          </div>
+        </Row>
+      )}
+
+      <Row label="Connect to another device’s vault" hint="Paste the vault key from your other device. This device will switch to that data.">
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (validKey(joinKey)) setConfirm('join');
+          }}
+        >
+          <input value={joinKey} onChange={(e) => setJoinKey(e.target.value)} placeholder="vt-…" className="input h-8 w-[180px] py-0 font-mono text-xs" />
+          <Button size="sm" variant="outline" icon={Link2} disabled={!validKey(joinKey) || joinKey.trim() === cloud.vault}>
+            Connect
+          </Button>
+        </form>
+      </Row>
+
+      {confirm === 'join' && (
+        <div className="mb-2 rounded-xl border border-warning/30 bg-warning/[0.06] p-3 text-xs text-ink2">
+          Data on this device will be replaced by what’s in that vault (anything not yet in it is lost — export a backup first if unsure).
+          <div className="mt-2 flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                cloud.connect(joinKey);
+                setJoinKey('');
+                setConfirm(null);
+                toast('Connected to vault', { sub: 'Pulling your data…' });
+              }}
+            >
+              Switch to that vault
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {cloud.vault && (
+        <Row label="Start a new cloud vault" hint="Deletes this vault’s cloud copy and makes a new empty one with a new key. Data on this device is kept and re-uploaded.">
+          {confirm === 'fresh' ? (
+            <span className="flex items-center gap-2">
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={async () => {
+                  setConfirm(null);
+                  await cloud.freshVault();
+                  toast('New vault created', { sub: 'Copy the new key to your other devices.' });
+                }}
+              >
+                Delete & start new
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>
+                Cancel
+              </Button>
+            </span>
+          ) : (
+            <Button variant="outline" size="sm" icon={RotateCcw} onClick={() => setConfirm('fresh')}>
+              New vault…
+            </Button>
+          )}
+        </Row>
+      )}
+
+      {cloud.vault && (
+        <Row label="Stop syncing this device" hint="Keeps your data here and in the cloud, just stops this device from syncing.">
+          <Button variant="ghost" size="sm" onClick={cloud.disconnect}>
+            Turn off
+          </Button>
+        </Row>
+      )}
+    </Card>
+  );
+}
+
 export default function Settings() {
-  const { settings, setSettings, accents, toast, profile, setProfile, restartTutorial, snapshot, importData, resetData, saveError } = useApp();
+  const { settings, setSettings, accents, toast, profile, setProfile, restartTutorial, snapshot, importData, resetData, saveError, cloud } = useApp();
   const set = (k) => (v) => setSettings((s) => ({ ...s, [k]: v }));
   const fileRef = useRef(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -81,7 +230,7 @@ export default function Settings() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Settings" sub="Changes apply instantly and save in this browser." />
+      <PageHeader title="Settings" sub={cloud.vault ? 'Changes apply instantly and sync to the cloud.' : 'Changes apply instantly and save in this browser.'} />
       <Tip id="settings" />
 
       <Card className="mb-4">
@@ -204,6 +353,8 @@ export default function Settings() {
         </Row>
       </Card>
 
+      <CloudCard />
+
       <Card>
         <CardHeader title="Your data" icon={HardDrive} />
         <Row
@@ -232,7 +383,7 @@ export default function Settings() {
             </Button>
           </>
         </Row>
-        <Row label="Erase everything" hint="Deletes all data in this browser. Export first if you might want it back.">
+        <Row label="Erase everything" hint={cloud.vault ? 'Deletes all data on this device and in your cloud vault (other devices clear too). Export first if you might want it back.' : 'Deletes all data in this browser. Export first if you might want it back.'}>
           {confirmReset ? (
             <span className="flex items-center gap-2">
               <Button

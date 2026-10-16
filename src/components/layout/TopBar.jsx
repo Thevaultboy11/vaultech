@@ -6,6 +6,7 @@ import { useApp } from '../../store';
 import { cx } from '../ui';
 import { Logo } from './Sidebar';
 import { titleFor } from './nav';
+import SyncBadge from './SyncBadge';
 
 const EXAMPLES = [
   'Calc pset every Mon 9am p1 #school',
@@ -136,6 +137,7 @@ export default function TopBar() {
           </AnimatePresence>
         </div>
 
+        <SyncBadge />
         <div className="relative">
           <button
             onClick={() => setBellOpen((o) => !o)}

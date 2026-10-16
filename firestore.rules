@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Vault Tech Industries ──────────────────────────────────────────
+    // Data lives at vaultech/{vaultKey}/sections/{section}.
+    // No sign-in: the long random vault key is the password. Nobody can
+    // list the vaultech collection, so keys can't be discovered.
+    match /vaultech/{vault}/sections/{section} {
+      allow read, delete: if vault.size() >= 24;
+      allow create, update: if vault.size() >= 24
+        && request.resource.data.json is string
+        && request.resource.data.json.size() < 1000000;
+    }
+
+    // Keep any rules your other apps in this project already use
+    // (e.g. Clocky Clone) below this line, inside this same block.
+  }
+}

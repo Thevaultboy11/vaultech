@@ -2,7 +2,7 @@
 
 A personal productivity platform for school, work and life — courses with a **baseline gap tracker**, a daily plan, tasks, a week calendar, habits, reading, gym, focus timer, screen time, a sales pipeline and an arbitrage board.
 
-It runs entirely in your browser. No account, no server: everything you enter is saved on your device.
+It runs in your browser with no account. Everything you enter is saved on your device and synced to Firebase Firestore.
 
 ## Run it
 
@@ -24,15 +24,42 @@ The app starts **empty**. **Tutorial mode** is on by default:
 
 Dismiss tips one by one with **Got it**, or turn the whole thing off in **Settings → Tutorial mode**. **Restart tutorial** brings every tip back.
 
+## Cloud sync (Firebase Firestore)
+
+Your data also syncs to Firestore in the `vaultboy-projecet` Firebase project, so it's backed up and shared between your devices. There's **no sign-in**:
+
+- The first time the app opens, it creates a private **vault key** (a long random code like `vt-…`). Your data is stored at `vaultech/{vaultKey}/sections/{section}`, one document per part (tasks, courses, habits…).
+- To use the same data on another device, copy the key from **Settings → Cloud sync** on the first device and paste it under **Connect to another device's vault** on the second.
+- The key works like a password. Anyone who has it can read and change that vault, so don't share it.
+- Changes upload about a second after you make them. Other open devices update live. If two devices change the same part at once, the most recent change wins.
+- When you're offline, the app keeps working and syncs when you're back.
+- The top-bar cloud icon shows the status: saved, saving, offline or problem.
+
+### One-time Firestore setup
+
+1. In the [Firebase console](https://console.firebase.google.com/), open the project and go to **Databases & Storage → Firestore**. If there's no database yet, click **Create database** and choose production mode.
+2. Open the **Rules** tab. **Add** the `match /vaultech/...` block from [`firestore.rules`](firestore.rules) inside the `match /databases/{database}/documents { … }` section. Keep any existing rules for other apps, then click **Publish**.
+
+Until the rules are published, the cloud icon shows "Sync problem" and the app keeps saving locally.
+
+The Firebase web config is in `src/firebaseConfig.js`. These values are public by design; the rules are what protect the data.
+
+### Testing sync without touching real data
+
+```bash
+node test/mockServer.mjs            # in one terminal: a local stand-in for Firestore
+CLOUD_MOCK=1 npm run dev            # in another: the app, pointed at the stand-in
+```
+
 ## Where your data lives
 
-Everything is stored as **one JSON object** in your browser’s `localStorage`, under the key `vault-tech-industries:data`. It saves automatically a moment after every change.
+Everything is stored as **one JSON object** in your browser’s `localStorage`, under the key `vault-tech-industries:data`, and synced to Firestore (above). It saves automatically a moment after every change.
 
 - **Settings → Your data → Export JSON** downloads a backup (`vault-tech-industries-YYYY-MM-DD.json`).
 - **Import JSON** loads a backup — use it to move to another browser or device.
-- **Erase…** wipes everything.
+- **Erase…** wipes everything on this device and in your cloud vault.
 
-Data is per browser and per device. Clearing site data or using a private window loses it — export a backup now and then.
+If you turn cloud sync off, data stays only in this browser. Clearing site data or using a private window would then lose it, so export a backup now and then.
 
 ## Pages
 
@@ -76,6 +103,8 @@ React 18 · Vite · Tailwind CSS 3 · lucide-react · framer-motion. No router: 
 src/
   App.jsx                 shell + view switch
   store.jsx               all state, actions and localStorage saving
+  firebaseConfig.js       Firebase project config
+  lib/cloud/              sync.js (sync logic) + firebaseBackend.js (Firestore calls)
   data/defaults.js        empty starting data, settings, workout templates
   lib/                    dates, gap math, quick-add parser
   components/

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ACCENTS, DATA_VERSION, PR_LIFTS, defaultSettings, emptyData, workoutTemplates } from './data/defaults';
 import { computeGap } from './lib/courses';
 import { TODAY, addDays, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
+import { useCloudSync } from './lib/cloud/sync';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -131,7 +132,6 @@ export function AppProvider({ children }) {
   const snapshot = useMemo(
     () => ({
       version: DATA_VERSION,
-      savedAt: new Date().toISOString(),
       profile,
       courses: courses.map(({ gapCount, behindCount, aheadCount, hoursToCatchUp, coverage, ...c }) => c),
       tasks,
@@ -163,6 +163,35 @@ export function AppProvider({ children }) {
     }, 250);
     return () => clearTimeout(t);
   }, [snapshot]);
+
+  // Replace only the keys present in `part` (used by cloud sync for one section at a time)
+  const applyPartial = (part) => {
+    if (!part || typeof part !== 'object') return;
+    const base = emptyData();
+    const arr = (v) => (Array.isArray(v) ? v : []);
+    const map = {
+      profile: (v) => setProfile({ ...base.profile, ...(v || {}) }),
+      settings: (v) => setSettings({ ...defaultSettings, ...(v || {}) }),
+      courses: (v) => setCourses(arr(v).map((c) => computeGap(Array.isArray(c.topics) ? c : { ...c, topics: [] }))),
+      tasks: (v) => setTasks(arr(v)),
+      habits: (v) => setHabits(arr(v)),
+      books: (v) => setBooks(arr(v)),
+      workouts: (v) => setWorkouts(arr(v)),
+      deals: (v) => setDeals(arr(v)),
+      jobLeads: (v) => setJobLeads(arr(v)),
+      focusSessions: (v) => setFocusSessions(arr(v)),
+      screenTimeLogs: (v) => setScreenTimeLogs(arr(v)),
+      timeBlocks: (v) => setTimeBlocks(arr(v)),
+      weeklyGoals: (v) => setWeeklyGoals(arr(v)),
+      top3: (v) => setTop3(arr(v)),
+      notifRead: (v) => setNotifRead(arr(v)),
+      tutorialDone: (v) => setTutorialDone(arr(v)),
+    };
+    for (const [k, v] of Object.entries(part)) map[k]?.(v);
+    if ('courses' in part) setSelectedCourseId((cur) => (arr(part.courses).some((c) => c.id === cur) ? cur : arr(part.courses)[0]?.id || null));
+  };
+
+  const cloud = useCloudSync({ snapshot, applyPartial });
 
   const applyData = (raw) => {
     const d = normalize(raw);
@@ -563,7 +592,7 @@ export function AppProvider({ children }) {
     notifications, markNotifs,
     settings, setSettings, accents: ACCENTS,
     tutorialDone, dismissTip, restartTutorial,
-    snapshot, importData, resetData, saveError,
+    snapshot, importData, resetData, saveError, cloud,
     toasts, toast, dismissToast,
     derived,
     fmtShort,
