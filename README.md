@@ -26,23 +26,30 @@ Dismiss tips one by one with **Got it**, or turn the whole thing off in **Settin
 
 ## Cloud sync (Firebase Firestore)
 
-Your data also syncs to Firestore in the `vaultboy-projecet` Firebase project, so it's backed up and shared between your devices. There's **no sign-in**:
+Your data also syncs to Firestore in the `vaultboy-projecet` Firebase project, so it's backed up and shared between your devices. There's **no sign-in**, and it's kept small:
 
-- The first time the app opens, it creates a private **vault key** (a long random code like `vt-…`). Your data is stored at `vaultech/{vaultKey}/sections/{section}`, one document per part (tasks, courses, habits…).
-- To use the same data on another device, copy the key from **Settings → Cloud sync** on the first device and paste it under **Connect to another device's vault** on the second.
-- The key works like a password. Anyone who has it can read and change that vault, so don't share it.
-- Changes upload about a second after you make them. Other open devices update live. If two devices change the same part at once, the most recent change wins.
-- When you're offline, the app keeps working and syncs when you're back.
-- The top-bar cloud icon shows the status: saved, saving, offline or problem.
+- **The whole app is one document,** `vaultech/{vaultKey}`. It's one JSON string (the same as Settings → Export), usually a few KB.
+- **Writes only happen when something changed,** at most once every 2 seconds.
+- **The vault key is created automatically** on first open: a long random code like `vt-…`. It works like a password, so don't share it.
+- **To use the same data on another device,** copy the key from **Settings → Cloud sync** and paste it under **Connect to another device's vault** on the other device.
+- **Other open devices update live.** If two devices change something at the same time, the most recent change wins.
+- **Offline, the app keeps working** and syncs when you're back online.
 
-### One-time Firestore setup
+### One-time Firestore rules
 
-1. In the [Firebase console](https://console.firebase.google.com/), open the project and go to **Databases & Storage → Firestore**. If there's no database yet, click **Create database** and choose production mode.
-2. Open the **Rules** tab. **Add** the `match /vaultech/...` block from [`firestore.rules`](firestore.rules) inside the `match /databases/{database}/documents { … }` section. Keep any existing rules for other apps, then click **Publish**.
+Pick one of the two ways.
 
-Until the rules are published, the cloud icon shows "Sync problem" and the app keeps saving locally.
+**Console (safest if other apps use this project):** go to Firebase → Firestore → **Rules**. Add the `match /vaultech/{vault}` block from [`firestore.rules`](firestore.rules) next to your existing rules, then click **Publish**.
 
-The Firebase web config is in `src/firebaseConfig.js`. These values are public by design; the rules are what protect the data.
+**CLI (fast):** this **replaces all** Firestore rules in the project with `firestore.rules`. Only use it if no other app (e.g. Clocky Clone) needs its own rules, or add those rules to the file first.
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase deploy --only firestore:rules
+```
+
+Until the rule is published, the cloud icon shows "Sync problem" and the app keeps saving locally. The web config lives in `src/firebaseConfig.js`. These values are public by design; the rules protect the data.
 
 ### Testing sync without touching real data
 
@@ -105,6 +112,7 @@ src/
   store.jsx               all state, actions and localStorage saving
   firebaseConfig.js       Firebase project config
   lib/cloud/              sync.js (sync logic) + firebaseBackend.js (Firestore calls)
+firestore.rules, firebase.json, .firebaserc   Firestore rules + CLI deploy config
   data/defaults.js        empty starting data, settings, workout templates
   lib/                    dates, gap math, quick-add parser
   components/

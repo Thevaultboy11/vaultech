@@ -1,29 +1,16 @@
-// Cloud sync without sign-in.
+// Cloud sync without sign-in — kept deliberately small.
 //
-// Each browser holds a private "vault key" (a long random string). Data is stored in
-// Firestore at  vaultech/{vaultKey}/sections/{section}  as { json, updatedAt, device }.
-// Anyone with the key can read/write that vault, so the key works like a password:
-// copy it to your other devices, don't post it anywhere.
+// The whole app is ONE Firestore document:  vaultech/{vaultKey}  →  { json, updatedAt, device }
+// `json` is the same JSON object you get from Settings → Export (usually a few KB).
+// The vault key is a long random string that works like a password.
 //
-// Conflict rule: per section, the most recent change wins.
+// Writes only happen when something actually changed, at most once every 2 seconds.
+// If two devices edit at once, the most recent change wins.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as backend from '@cloud-backend';
 
-export const SECTIONS = {
-  meta: ['profile', 'settings', 'top3', 'notifRead', 'tutorialDone', 'weeklyGoals'],
-  courses: ['courses'],
-  tasks: ['tasks'],
-  habits: ['habits'],
-  books: ['books'],
-  workouts: ['workouts'],
-  deals: ['deals'],
-  jobLeads: ['jobLeads'],
-  focusSessions: ['focusSessions'],
-  screenTimeLogs: ['screenTimeLogs'],
-  timeBlocks: ['timeBlocks'],
-};
-const NAMES = Object.keys(SECTIONS);
 const SYNC_STORAGE = 'vault-tech-industries:sync';
+const DEBOUNCE_MS = 2000;
 const MAX_BYTES = 900_000; // Firestore's limit is 1 MiB per document
 
 export const cloudConfigured = backend.configured;
@@ -33,17 +20,6 @@ function hash(s) {
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return `${s.length}:${h >>> 0}`;
 }
-
-export function sectionJson(snapshot, name) {
-  const o = {};
-  for (const k of SECTIONS[name]) o[k] = snapshot[k];
-  return JSON.stringify(o);
-}
-
-const isEmptyJson = (name, json) => {
-  if (name === 'meta') return false;
-  return JSON.parse(json)[SECTIONS[name][0]].length === 0;
-};
 
 export function newVaultKey() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -57,7 +33,7 @@ export const validKey = (k) => /^[A-Za-z0-9_-]{24,100}$/.test(normalizeKey(k));
 function loadMeta() {
   try {
     const m = JSON.parse(localStorage.getItem(SYNC_STORAGE) || 'null');
-    if (m && typeof m === 'object') return { synced: {}, changedAt: {}, ...m };
+    if (m && typeof m === 'object' && 'vault' in m) return { synced: null, changedAt: 0, ...m };
   } catch {
     /* ignore */
   }
@@ -74,7 +50,7 @@ function saveMeta(m) {
 function friendlyError(err) {
   const code = err?.code || '';
   if (code.includes('permission-denied'))
-    return 'Firestore refused access. Add the vaultech rules in Firebase → Firestore → Rules (see README).';
+    return 'Firestore refused access. Add the vaultech rule in Firebase → Firestore → Rules (see README).';
   if (code.includes('unavailable')) return 'Can’t reach Firestore right now. Changes are kept and will sync later.';
   if (code.includes('not-found') || code.includes('failed-precondition'))
     return 'No Firestore database found in the project. Create one in Firebase → Firestore.';
@@ -84,14 +60,14 @@ function friendlyError(err) {
 
 /**
  * snapshot: the full app data object (from the store)
- * applyPartial(obj): replaces the given top-level keys in the store
+ * applyAll(obj): replaces the app data with obj
  */
-export function useCloudSync({ snapshot, applyPartial }) {
+export function useCloudSync({ snapshot, applyAll }) {
   const [meta, setMetaState] = useState(() => {
     const m = loadMeta();
     if (m) return m;
-    // First run: create a fresh, empty vault and turn sync on.
-    const fresh = { vault: backend.configured ? newVaultKey() : null, synced: {}, changedAt: {}, device: newVaultKey().slice(3, 11) };
+    // First run: new, empty vault with sync on.
+    const fresh = { vault: backend.configured ? newVaultKey() : null, synced: null, changedAt: 0, device: newVaultKey().slice(3, 11) };
     saveMeta(fresh);
     return fresh;
   });
@@ -101,163 +77,123 @@ export function useCloudSync({ snapshot, applyPartial }) {
     saveMeta(m);
     setMetaState(m);
   };
+  const patchMeta = (p) => {
+    metaRef.current = { ...metaRef.current, ...p };
+    saveMeta(metaRef.current);
+  };
 
   const [status, setStatus] = useState(meta.vault ? 'connecting' : 'off');
   const [error, setError] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
 
-  const snapRef = useRef(snapshot);
-  snapRef.current = snapshot;
-  const applyRef = useRef(applyPartial);
-  applyRef.current = applyPartial;
-  const ready = useRef(new Set());
-  const lastJson = useRef({});
+  const json = JSON.stringify(snapshot);
+  const jsonRef = useRef(json);
+  jsonRef.current = json;
+  const applyRef = useRef(applyAll);
+  applyRef.current = applyAll;
+  const ready = useRef(false);
+  const lastJson = useRef(json);
   const timer = useRef(null);
-  const inflight = useRef(0);
-
-  const markSynced = (name, h) => {
-    const m = metaRef.current;
-    if (m.synced[name] === h) return;
-    metaRef.current = { ...m, synced: { ...m.synced, [name]: h } };
-    saveMeta(metaRef.current);
-  };
 
   const flush = useCallback(async () => {
     const m = metaRef.current;
-    if (!m.vault) return;
+    if (!m.vault || !ready.current) return;
     const vault = m.vault;
-    const jobs = [];
-    for (const name of NAMES) {
-      if (!ready.current.has(name)) continue;
-      const json = sectionJson(snapRef.current, name);
-      const h = hash(json);
-      if (metaRef.current.synced[name] === h) continue;
-      if (json.length > MAX_BYTES) {
-        setStatus('error');
-        setError(`“${name}” is too big to sync (over 900 KB). Export a backup and remove old entries.`);
-        continue;
-      }
-      jobs.push(
-        backend.write(vault, name, { json, updatedAt: Date.now(), device: m.device }).then(() => {
-          if (metaRef.current.vault === vault) markSynced(name, h);
-        })
-      );
+    const body = jsonRef.current;
+    const h = hash(body);
+    if (m.synced === h) return; // nothing new
+    if (body.length > MAX_BYTES) {
+      setStatus('error');
+      setError('Your data is over 900 KB, too big for one Firestore document. Export a backup and remove old entries.');
+      return;
     }
-    if (!jobs.length) return;
-    inflight.current++;
     setStatus('syncing');
     try {
-      await Promise.all(jobs);
+      await backend.write(vault, { json: body, updatedAt: Date.now(), device: m.device });
+      if (metaRef.current.vault === vault) patchMeta({ synced: h });
       setError(null);
       setLastSyncedAt(new Date());
       setStatus('synced');
     } catch (err) {
       setError(friendlyError(err));
       setStatus('error');
-      // try again in a bit
       clearTimeout(timer.current);
-      timer.current = setTimeout(flush, 15000);
-    } finally {
-      inflight.current--;
+      timer.current = setTimeout(flush, 30000); // retry later
     }
   }, []);
 
   const schedule = useCallback(
-    (ms = 800) => {
+    (ms = DEBOUNCE_MS) => {
       clearTimeout(timer.current);
       timer.current = setTimeout(flush, ms);
     },
     [flush]
   );
 
-  // Listen to every section of the vault
+  // Listen to the vault document (fires once on load, then on every change from any device)
   useEffect(() => {
     const vault = meta.vault;
-    ready.current = new Set();
+    ready.current = false;
     if (!vault || !backend.configured) {
       setStatus('off');
       return;
     }
     setStatus('connecting');
     setError(null);
-    for (const name of NAMES) lastJson.current[name] = sectionJson(snapRef.current, name);
+    lastJson.current = jsonRef.current;
 
-    const unsubs = NAMES.map((name) =>
-      backend.subscribe(
-        vault,
-        name,
-        (data) => {
-          if (metaRef.current.vault !== vault) return;
-          const local = sectionJson(snapRef.current, name);
-          const lh = hash(local);
-          const m = metaRef.current;
-          if (!data) {
-            // Nothing in the cloud yet → upload what we have (if anything)
-            if (isEmptyJson(name, local)) markSynced(name, lh);
-          } else {
-            const rh = hash(data.json);
-            if (rh === lh) markSynced(name, rh);
-            else {
-              const dirty = m.synced[name] !== lh;
-              const localNewer = (m.changedAt[name] || 0) > (data.updatedAt || 0);
-              if (!(dirty && localNewer)) {
-                // Remote wins: take it
-                markSynced(name, rh);
-                lastJson.current[name] = data.json;
-                try {
-                  applyRef.current(JSON.parse(data.json));
-                } catch {
-                  /* ignore malformed */
-                }
-                setLastSyncedAt(new Date());
+    const unsub = backend.subscribe(
+      vault,
+      (data) => {
+        if (metaRef.current.vault !== vault) return;
+        const local = jsonRef.current;
+        const lh = hash(local);
+        const m = metaRef.current;
+        if (data && typeof data.json === 'string') {
+          const rh = hash(data.json);
+          if (rh === lh) patchMeta({ synced: rh });
+          else {
+            const localDirty = m.synced !== lh;
+            const localNewer = (m.changedAt || 0) > (data.updatedAt || 0);
+            if (!(localDirty && localNewer)) {
+              // Cloud copy wins
+              patchMeta({ synced: rh });
+              lastJson.current = data.json;
+              try {
+                applyRef.current(JSON.parse(data.json));
+              } catch {
+                /* ignore malformed */
               }
+              setLastSyncedAt(new Date());
             }
           }
-          const first = !ready.current.has(name);
-          ready.current.add(name);
-          if (ready.current.size === NAMES.length) {
-            if (first) setStatus((s) => (s === 'connecting' ? 'synced' : s));
-            schedule(first ? 50 : 800);
-          }
-        },
-        (err) => {
-          setError(friendlyError(err));
-          setStatus('error');
         }
-      )
+        const first = !ready.current;
+        ready.current = true;
+        if (first) setStatus((s) => (s === 'connecting' ? 'synced' : s));
+        schedule(first ? 100 : DEBOUNCE_MS); // uploads only if local differs
+      },
+      (err) => {
+        setError(friendlyError(err));
+        setStatus('error');
+      }
     );
     return () => {
-      unsubs.forEach((u) => u && u());
+      if (unsub) unsub();
       clearTimeout(timer.current);
     };
   }, [meta.vault, schedule]);
 
-  // Local changes → note the time and queue an upload
+  // Local change → remember when, queue one upload
   useEffect(() => {
-    let changed = false;
-    const m = metaRef.current;
-    let changedAt = m.changedAt;
-    for (const name of NAMES) {
-      const json = sectionJson(snapshot, name);
-      if (lastJson.current[name] === undefined) {
-        lastJson.current[name] = json;
-        continue;
-      }
-      if (json !== lastJson.current[name]) {
-        lastJson.current[name] = json;
-        changedAt = { ...changedAt, [name]: Date.now() };
-        changed = true;
-      }
-    }
-    if (changed) {
-      metaRef.current = { ...m, changedAt };
-      saveMeta(metaRef.current);
-      if (m.vault && ready.current.size === NAMES.length) schedule();
-    }
-  }, [snapshot, schedule]);
+    if (json === lastJson.current) return;
+    lastJson.current = json;
+    patchMeta({ changedAt: Date.now() });
+    if (metaRef.current.vault && ready.current) schedule();
+  }, [json, schedule]);
 
-  // Online/offline indicator + flush when coming back
+  // Online/offline
   useEffect(() => {
     const on = () => {
       setOnline(true);
@@ -276,22 +212,17 @@ export function useCloudSync({ snapshot, applyPartial }) {
   const connect = (key) => {
     const vault = normalizeKey(key);
     if (!validKey(vault)) return false;
-    // Joining an existing vault: whatever is in the cloud wins.
-    setMeta({ ...metaRef.current, vault, synced: {}, changedAt: {} });
+    setMeta({ ...metaRef.current, vault, synced: null, changedAt: 0 }); // cloud copy wins
     return true;
   };
-
-  // Delete the current vault's cloud copy and start a new empty one.
-  // Local data is kept and uploaded to the new vault (erase locally first for a blank slate).
   const freshVault = async () => {
     const old = metaRef.current.vault;
     setMeta({ ...metaRef.current, vault: null });
-    if (old) await Promise.allSettled(NAMES.map((n) => backend.remove(old, n)));
-    setMeta({ ...metaRef.current, vault: newVaultKey(), synced: {}, changedAt: {} });
+    if (old) await backend.remove(old).catch(() => {});
+    setMeta({ ...metaRef.current, vault: newVaultKey(), synced: null, changedAt: 0 });
   };
-
-  const disconnect = () => setMeta({ ...metaRef.current, vault: null, synced: {}, changedAt: {} });
-  const enable = () => setMeta({ ...metaRef.current, vault: newVaultKey(), synced: {}, changedAt: {} });
+  const disconnect = () => setMeta({ ...metaRef.current, vault: null, synced: null, changedAt: 0 });
+  const enable = () => setMeta({ ...metaRef.current, vault: newVaultKey(), synced: null, changedAt: 0 });
   const syncNow = () => schedule(0);
 
   return {
@@ -301,6 +232,7 @@ export function useCloudSync({ snapshot, applyPartial }) {
     status: meta.vault && !online && status !== 'error' ? 'offline' : status,
     error,
     lastSyncedAt,
+    sizeKb: Math.max(1, Math.round(json.length / 1024)),
     connect,
     freshVault,
     disconnect,

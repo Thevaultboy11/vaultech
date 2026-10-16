@@ -3,7 +3,7 @@
 import http from 'node:http';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
-const docs = new Map(); // `${vault}/${section}` → { json, updatedAt, device, rev }
+const docs = new Map(); // vault → { json, updatedAt, device, rev }
 let rev = 0;
 
 const send = (res, code, body) => {
@@ -21,11 +21,11 @@ http
     if (req.method === 'OPTIONS') return send(res, 204);
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/dump') return send(res, 200, Object.fromEntries(docs));
-    const m = url.pathname.match(/^\/doc\/([^/]+)\/([^/]+)$/);
+    const m = url.pathname.match(/^\/doc\/([^/]+)$/);
     if (!m) return send(res, 404, { code: 'not-found' });
-    const [, vault, section] = m.map(decodeURIComponent);
+    const vault = decodeURIComponent(m[1]);
     if (vault.length < 24) return send(res, 403, { code: 'permission-denied' });
-    const key = `${vault}/${section}`;
+    const key = vault;
     if (req.method === 'GET') return send(res, 200, docs.get(key) || null);
     if (req.method === 'DELETE') {
       docs.delete(key);

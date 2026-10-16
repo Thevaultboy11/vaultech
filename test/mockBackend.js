@@ -5,7 +5,7 @@ const BASE = 'http://localhost:8787';
 export const backendName = 'Mock Firestore';
 export const configured = true;
 
-const url = (vault, section) => `${BASE}/doc/${encodeURIComponent(vault)}/${encodeURIComponent(section)}`;
+const url = (vault) => `${BASE}/doc/${encodeURIComponent(vault)}`;
 
 async function call(method, u, body) {
   const r = await fetch(u, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -18,13 +18,13 @@ async function call(method, u, body) {
   return data;
 }
 
-export function subscribe(vault, section, onData, onError) {
+export function subscribe(vault, onData, onError) {
   let last = undefined;
   let stopped = false;
   const tick = async () => {
     if (stopped) return;
     try {
-      const d = await call('GET', url(vault, section));
+      const d = await call('GET', url(vault));
       const sig = d ? d.rev : 0;
       if (sig !== last) {
         last = sig;
@@ -41,5 +41,5 @@ export function subscribe(vault, section, onData, onError) {
   };
 }
 
-export const write = (vault, section, payload) => call('PUT', url(vault, section), payload);
-export const remove = (vault, section) => call('DELETE', url(vault, section));
+export const write = (vault, payload) => call('PUT', url(vault), payload);
+export const remove = (vault) => call('DELETE', url(vault));

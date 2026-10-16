@@ -1,4 +1,4 @@
-// The only file that talks to Firebase. Everything else goes through sync.js.
+// The only file that talks to Firebase. One document per vault: vaultech/{vaultKey}.
 // The Firebase SDK is loaded lazily so the app itself opens instantly.
 import { ROOT_COLLECTION, firebaseConfig } from '../../firebaseConfig';
 
@@ -12,20 +12,19 @@ function load() {
   return sdk;
 }
 
-const ref = ({ fs, db }, vault, section) => fs.doc(db, ROOT_COLLECTION, vault, 'sections', section);
+const ref = ({ fs, db }, vault) => fs.doc(db, ROOT_COLLECTION, vault);
 
 export const backendName = 'Firestore';
 export const configured = Boolean(firebaseConfig.projectId);
 
-// onData(data | null) fires on first load and on every change (including from other devices).
-export function subscribe(vault, section, onData, onError) {
+export function subscribe(vault, onData, onError) {
   let unsub = null;
   let stopped = false;
   load()
     .then((s) => {
       if (stopped) return;
       unsub = s.fs.onSnapshot(
-        ref(s, vault, section),
+        ref(s, vault),
         (snap) => onData(snap.exists() ? snap.data() : null),
         (err) => onError(err)
       );
@@ -37,12 +36,12 @@ export function subscribe(vault, section, onData, onError) {
   };
 }
 
-export async function write(vault, section, payload) {
+export async function write(vault, payload) {
   const s = await load();
-  return s.fs.setDoc(ref(s, vault, section), payload);
+  return s.fs.setDoc(ref(s, vault), payload);
 }
 
-export async function remove(vault, section) {
+export async function remove(vault) {
   const s = await load();
-  return s.fs.deleteDoc(ref(s, vault, section));
+  return s.fs.deleteDoc(ref(s, vault));
 }

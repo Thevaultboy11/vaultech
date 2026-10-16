@@ -191,7 +191,7 @@ export function AppProvider({ children }) {
     if ('courses' in part) setSelectedCourseId((cur) => (arr(part.courses).some((c) => c.id === cur) ? cur : arr(part.courses)[0]?.id || null));
   };
 
-  const cloud = useCloudSync({ snapshot, applyPartial });
+  const cloud = useCloudSync({ snapshot, applyAll: applyPartial });
 
   const applyData = (raw) => {
     const d = normalize(raw);
