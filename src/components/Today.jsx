@@ -123,7 +123,7 @@ function ShutdownModal({ open, onClose, leftovers }) {
 }
 
 export default function Today() {
-  const { tasks, top3, timeBlocks } = useApp();
+  const { tasks, top3, timeBlocks, gcal } = useApp();
   const now = nowMin();
   const [shutdown, setShutdown] = useState(false);
 
@@ -137,15 +137,26 @@ export default function Today() {
     // Free time left: now → 11 PM, minus today's non-study blocks (classes, job, gym, protected creative…)
     const start = Math.min(now, DAY_END);
     let busy = 0;
-    for (const b of timeBlocks) {
-      if (!b.start.startsWith(TODAY) || b.type === 'study') continue;
-      const s = Math.max(start, toMin(b.start.slice(11)));
-      const e = Math.min(DAY_END, toMin(b.end.slice(11)));
-      if (e > s) busy += e - s;
+    const busyItems = [...timeBlocks.filter((b) => b.type !== 'study'), ...gcal.events.filter((ev) => !ev.allDay)];
+    // merge overlaps so double-booked time isn't subtracted twice
+    const spans = busyItems
+      .filter((b) => b.start.startsWith(TODAY))
+      .map((b) => [Math.max(start, toMin(b.start.slice(11))), Math.min(DAY_END, toMin(b.end.slice(11)))])
+      .filter(([a, b]) => b > a)
+      .sort((x, y) => x[0] - y[0]);
+    let curS = -1;
+    let curE = -1;
+    for (const [a, b] of spans) {
+      if (a > curE) {
+        if (curE > curS) busy += curE - curS;
+        curS = a;
+        curE = b;
+      } else curE = Math.max(curE, b);
     }
+    if (curE > curS) busy += curE - curS;
     const availableMin = Math.max(0, DAY_END - start - busy);
     return { overdue, today, tonight, candidates: open, plannedMin, availableMin };
-  }, [tasks, timeBlocks, now]);
+  }, [tasks, timeBlocks, gcal.events, now]);
 
   const over = plannedMin > availableMin;
   const empty = !overdue.length && !today.length && !tonight.length;
@@ -185,7 +196,7 @@ export default function Today() {
               )}
             </div>
             <Progress value={availableMin ? Math.min(1, plannedMin / availableMin) : plannedMin ? 1 : 0} className="mt-3" color={over ? '#FBBF24' : undefined} />
-            <p className="mt-2 text-[11px] text-ink3">Free time counts from now until 11 PM, skipping classes, job, gym and protected blocks on your calendar.</p>
+            <p className="mt-2 text-[11px] text-ink3">Free time counts from now until 11 PM, skipping classes, job, gym, protected blocks and Google Calendar events.</p>
           </Card>
 
           {empty ? (

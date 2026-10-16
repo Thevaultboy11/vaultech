@@ -1,10 +1,73 @@
-import { ChevronLeft, ChevronRight, Lock, MousePointerClick, Plus, Sparkles, Trash2, Wand2 } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronLeft, ChevronRight, Lock, MousePointerClick, Plus, Sparkles, Trash2, Wand2, ExternalLink, RefreshCw, CalendarDays } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { DOW, TODAY, addDays, dow, fmtDur, fmtShort, fmtTime, fromMin, nowMin, relDay, toMin, weekDays } from '../lib/dates';
 import { Tip } from './Tutorial';
 import { useApp } from '../store';
 import { Button, Card, Callout, EmptyState, Field, Modal, PageHeader, Toggle, cx } from './ui';
 import { PriorityFlag } from './tasks/TaskRow';
+
+// Side-by-side columns for overlapping items in one day
+function layoutDay(items) {
+  const sorted = [...items].sort((a, b) => a.s - b.s || b.e - a.e);
+  const out = [];
+  let cluster = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    const cols = [];
+    for (const it of cluster) {
+      let c = cols.findIndex((end) => end <= it.s);
+      if (c === -1) {
+        c = cols.length;
+        cols.push(0);
+      }
+      cols[c] = it.e;
+      it.col = c;
+    }
+    for (const it of cluster) out.push({ ...it, cols: cols.length });
+    cluster = [];
+  };
+  for (const it of sorted) {
+    if (cluster.length && it.s >= clusterEnd) flush();
+    cluster.push(it);
+    clusterEnd = Math.max(clusterEnd, it.e);
+  }
+  if (cluster.length) flush();
+  return out;
+}
+
+function GoogleEventModal({ ev, onClose }) {
+  if (!ev) return null;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={ev.title}
+      sub={ev.allDay ? `${relDay(ev.date)} · all day` : `${relDay(ev.date)} · ${fmtTime(ev.start.slice(11))}–${fmtTime(ev.end.slice(11))}`}
+      footer={
+        <>
+          {ev.link && (
+            <a href={ev.link} target="_blank" rel="noreferrer" className="mr-auto inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs text-ink2 hover:bg-white/[0.05] hover:text-ink">
+              <ExternalLink size={13} /> Open in Google Calendar
+            </a>
+          )}
+          <Button size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: ev.color }} />
+          <span className="text-ink2">{ev.calendarName}</span>
+          <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[11px] text-ink3">Google · read-only</span>
+        </div>
+        {ev.location && <p className="text-xs text-ink3">{ev.location}</p>}
+        <p className="text-xs text-ink3">Edit this event in Google Calendar. Auto-Plan treats it as busy time.</p>
+      </div>
+    </Modal>
+  );
+}
 
 export const BLOCK_TYPES = {
   class: { label: 'Class', color: '#7EC8E3' },
@@ -210,12 +273,19 @@ function BlockModal({ block, onClose }) {
 }
 
 export default function Calendar() {
-  const { timeBlocks, tasks, settings, autoPlan, addBlock, toast } = useApp();
+  const { timeBlocks, tasks, settings, autoPlan, addBlock, toast, gcal, go } = useApp();
+  const [openEvent, setOpenEvent] = useState(null);
   const [anchor, setAnchor] = useState(TODAY);
   const [draft, setDraft] = useState(null);
   const [openBlock, setOpenBlock] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const days = weekDays(anchor, settings.weekStartsOn);
+  useEffect(() => gcal.ensureWeek(days[0]), [days[0]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const gErrors = Object.values(gcal.errors);
+  const offGrid = (e) => !e.allDay && (toMin(e.end.slice(11)) <= START_H * 60 || toMin(e.start.slice(11)) >= END_H * 60);
+  // All-day events + timed events outside the visible 7 AM–11 PM grid go in the top row
+  const allDayByDate = (d) => gcal.events.filter((e) => e.date === d && (e.allDay || offGrid(e)));
+  const hasAllDay = days.some((d) => allDayByDate(d).length);
 
   const linked = new Set(timeBlocks.map((b) => b.linkedTaskId).filter(Boolean));
   const parents = new Set(tasks.map((t) => t.parentId).filter(Boolean));
@@ -278,8 +348,34 @@ export default function Calendar() {
             {k === 'creative' && <Lock size={11} className="text-ink3" />}
           </span>
         ))}
-        <span className="text-[11px] text-ink3 sm:ml-auto">Creative blocks are protected — Auto-Plan won’t overwrite them.</span>
+        {(settings.gcalCalendars || []).filter((c) => c.enabled !== false).map((c) => (
+          <span key={c.id} className="inline-flex items-center gap-1.5 text-xs text-ink2">
+            <span className="h-2.5 w-2.5 rounded-[3px] border border-dashed" style={{ borderColor: c.color, background: `${c.color}33` }} />
+            {c.name || 'Google'}
+          </span>
+        ))}
+        <span className="flex items-center gap-2 text-[11px] text-ink3 sm:ml-auto">
+          {(settings.gcalCalendars || []).length ? (
+            <button onClick={gcal.refresh} className="inline-flex items-center gap-1 hover:text-ink2" title="Refresh Google Calendar">
+              <RefreshCw size={11} className={gcal.loading ? 'animate-spin' : ''} />
+              {gcal.lastFetched ? `Google updated ${gcal.lastFetched.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Load Google'}
+            </button>
+          ) : (
+            <button onClick={() => go('settings')} className="inline-flex items-center gap-1 hover:text-ink2">
+              <CalendarDays size={11} /> Add your Google Calendar in Settings
+            </button>
+          )}
+          <span className="hidden lg:inline">· Creative blocks are protected — Auto-Plan won’t overwrite them.</span>
+        </span>
       </div>
+      {gErrors.length > 0 && (
+        <Callout icon={CalendarDays} tone="warning" className="mb-4">
+          {gErrors[0]}{' '}
+          <button className="underline" onClick={() => go('settings')}>
+            Settings
+          </button>
+        </Callout>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
         <Card className="overflow-hidden p-0 sm:p-0" style={{ padding: 0 }}>
@@ -315,6 +411,27 @@ export default function Calendar() {
                 })}
               </div>
 
+              {hasAllDay && (
+                <div className="grid grid-cols-[52px_repeat(7,1fr)] border-b border-line bg-surface">
+                  <div className="flex items-center justify-end pr-2 text-[9px] uppercase tracking-wider text-ink3">all day</div>
+                  {days.map((d) => (
+                    <div key={d} className="min-h-[28px] space-y-0.5 border-l border-line p-1">
+                      {allDayByDate(d).map((ev) => (
+                        <button
+                          key={ev.id}
+                          onClick={() => setOpenEvent(ev)}
+                          className="block w-full truncate rounded-md px-1.5 py-0.5 text-left text-[10.5px] font-medium"
+                          style={{ background: `${ev.color}26`, color: ev.color }}
+                        >
+                          {!ev.allDay && <span className="mr-1 opacity-70">{fmtTime(ev.start.slice(11))}</span>}
+                          {ev.title}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Grid */}
               <div className="relative grid grid-cols-[52px_repeat(7,1fr)]" style={{ height: HOURS.length * HOUR }}>
                 <div className="relative">
@@ -325,7 +442,12 @@ export default function Calendar() {
                   ))}
                 </div>
                 {days.map((d) => {
-                  const blocks = timeBlocks.filter((b) => b.start.startsWith(d));
+                  const items = layoutDay([
+                    ...timeBlocks.filter((b) => b.start.startsWith(d)).map((b) => ({ kind: 'block', b, s: toMin(b.start.slice(11)), e: toMin(b.end.slice(11)) })),
+                    ...gcal.events
+                      .filter((ev) => !ev.allDay && !offGrid(ev) && ev.date === d)
+                      .map((ev) => ({ kind: 'g', ev, s: toMin(ev.start.slice(11)), e: toMin(ev.end.slice(11)) })),
+                  ]);
                   const isToday = d === TODAY;
                   return (
                     <div
@@ -340,11 +462,39 @@ export default function Calendar() {
                       {HOURS.map((h) => (
                         <div key={h} className="pointer-events-none absolute inset-x-0 border-t border-line/60" style={{ top: (h - START_H) * HOUR }} />
                       ))}
-                      {blocks.map((b) => {
-                        const s = toMin(b.start.slice(11));
-                        const e = toMin(b.end.slice(11));
-                        const t = BLOCK_TYPES[b.type];
+                      {items.map((it) => {
+                        const s = Math.max(it.s, START_H * 60);
+                        const e = Math.min(Math.max(it.e, s + 15), END_H * 60);
+                        if (e <= START_H * 60 || s >= END_H * 60) return null;
                         const h = Math.max(20, yOf(e) - yOf(s) - 2);
+                        const pos = { top: yOf(s) + 1, height: h, left: `calc(${(it.col / it.cols) * 100}% + 4px)`, width: `calc(${100 / it.cols}% - 8px)` };
+                        if (it.kind === 'g') {
+                          const ev = it.ev;
+                          return (
+                            <button
+                              key={ev.id}
+                              onClick={(x) => {
+                                x.stopPropagation();
+                                setOpenEvent(ev);
+                              }}
+                              className="absolute overflow-hidden rounded-lg border border-dashed px-2 py-1 text-left transition hover:brightness-125"
+                              style={{ ...pos, borderColor: `${ev.color}99`, background: `${ev.color}14` }}
+                              title={`${ev.title} · ${ev.calendarName}`}
+                            >
+                              <div className="flex items-center gap-1 text-[11px] font-medium leading-tight" style={{ color: ev.color }}>
+                                <CalendarDays size={9} className="shrink-0" />
+                                <span className="truncate">{ev.title}</span>
+                              </div>
+                              {h > 34 && (
+                                <div className="mt-0.5 text-[10px] tabular-nums text-ink3">
+                                  {fmtTime(ev.start.slice(11))}–{fmtTime(ev.end.slice(11))}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        }
+                        const b = it.b;
+                        const t = BLOCK_TYPES[b.type];
                         return (
                           <button
                             key={b.id}
@@ -353,12 +503,11 @@ export default function Calendar() {
                               setOpenBlock(b);
                             }}
                             className={cx(
-                              'absolute left-1 right-1 overflow-hidden rounded-lg px-2 py-1 text-left transition hover:brightness-125',
+                              'absolute overflow-hidden rounded-lg px-2 py-1 text-left transition hover:brightness-125',
                               b.auto && 'outline outline-1 outline-dashed outline-accent/50'
                             )}
                             style={{
-                              top: yOf(s) + 1,
-                              height: h,
+                              ...pos,
                               background: `${t.color}1F`,
                               boxShadow: `inset 2px 0 0 ${t.color}`,
                             }}
@@ -424,7 +573,7 @@ export default function Calendar() {
             </div>
           </Card>
           <Callout icon={Wand2}>
-            <b className="text-ink">Auto-Plan</b> fills free hours with your highest-priority unscheduled tasks. It never touches protected blocks or classes.
+            <b className="text-ink">Auto-Plan</b> fills free hours with your highest-priority unscheduled tasks. It never touches protected blocks, classes or Google events.
           </Callout>
           <Button
             variant="outline"
@@ -439,6 +588,7 @@ export default function Calendar() {
 
       {draft && <AddBlockModal draft={draft} onClose={() => setDraft(null)} />}
       {openBlock && <BlockModal block={openBlock} onClose={() => setOpenBlock(null)} />}
+      {openEvent && <GoogleEventModal ev={openEvent} onClose={() => setOpenEvent(null)} />}
     </div>
   );
 }

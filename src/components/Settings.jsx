@@ -1,5 +1,6 @@
-import { CalendarDays, Cloud, Copy, Download, Eye, EyeOff, GraduationCap, HardDrive, Link2, RefreshCw, RotateCcw, Smartphone, Trash2, Upload, Webhook } from 'lucide-react';
+import { CalendarDays, ChevronDown, Plus, X, Cloud, Copy, Download, Eye, EyeOff, GraduationCap, HardDrive, Link2, RefreshCw, RotateCcw, Smartphone, Trash2, Upload, Webhook } from 'lucide-react';
 import { validKey } from '../lib/cloud/sync';
+import { cleanCalendarId, fetchCalendarName } from '../lib/gcal';
 import { SYNC_LABEL } from './layout/SyncBadge';
 import { useRef, useState } from 'react';
 import { TODAY, fmtDur } from '../lib/dates';
@@ -39,6 +40,114 @@ const PROFILE_FIELDS = [
   { k: 'company', label: 'Job / company', ph: 'Names the Job page' },
   { k: 'role', label: 'Role', ph: 'e.g. Sales & marketing intern' },
 ];
+
+const GCAL_COLORS = ['#60A5FA', '#F472B6', '#34D399', '#FBBF24', '#A78BFA', '#FB923C'];
+
+function GoogleCalendarCard() {
+  const { settings, setSettings, gcal, toast } = useApp();
+  const cals = settings.gcalCalendars || [];
+  const [input, setInput] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [help, setHelp] = useState(cals.length === 0);
+  const setCals = (fn) => setSettings((s) => ({ ...s, gcalCalendars: fn(s.gcalCalendars || []) }));
+
+  const add = async (e) => {
+    e.preventDefault();
+    const id = cleanCalendarId(input);
+    if (!id) return;
+    if (cals.some((c) => c.id === id)) {
+      toast('Already added', { tone: 'muted' });
+      return;
+    }
+    setAdding(true);
+    let name = id.includes('@group.calendar.google.com') ? 'Google Calendar' : id;
+    let ok = true;
+    try {
+      name = await fetchCalendarName(id);
+    } catch (err) {
+      ok = false;
+      toast('Added, but Google said no', { sub: err.message, tone: 'warning', ms: 6000 });
+    }
+    setCals((list) => [...list, { id, name, color: GCAL_COLORS[list.length % GCAL_COLORS.length], enabled: true }]);
+    setInput('');
+    setAdding(false);
+    if (ok) toast('Calendar added', { sub: name });
+  };
+
+  if (!gcal.configured) return null;
+
+  return (
+    <Card className="mb-4" accent={cals.length > 0}>
+      <CardHeader
+        title="Google Calendar"
+        icon={CalendarDays}
+        sub="Shows your Google events on the Calendar page (read-only). Today and Auto-Plan treat them as busy."
+        action={
+          cals.length > 0 && (
+            <Button variant="outline" size="sm" icon={RefreshCw} onClick={gcal.refresh} disabled={gcal.loading}>
+              {gcal.loading ? 'Loading…' : 'Refresh'}
+            </Button>
+          )
+        }
+      />
+
+      {cals.map((c) => (
+        <div key={c.id} className="flex items-center gap-3 border-b border-line py-3">
+          <button
+            onClick={() => setCals((l) => l.map((x) => (x.id === c.id ? { ...x, color: GCAL_COLORS[(GCAL_COLORS.indexOf(x.color) + 1) % GCAL_COLORS.length] } : x)))}
+            className="h-4 w-4 shrink-0 rounded-full"
+            style={{ background: c.color }}
+            title="Change color"
+            aria-label="Change color"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13.5px]">{c.name}</div>
+            <div className="truncate font-mono text-[11px] text-ink3">{c.id}</div>
+            {gcal.errors[c.id] && <div className="mt-0.5 text-[11.5px] text-danger">{gcal.errors[c.id]}</div>}
+            {!gcal.errors[c.id] && c.enabled !== false && gcal.lastFetched && (
+              <div className="mt-0.5 text-[11px] text-ink3">{gcal.events.filter((e) => e.calendarId === c.id).length} events in the next 6 weeks</div>
+            )}
+          </div>
+          <Toggle checked={c.enabled !== false} onChange={(v) => setCals((l) => l.map((x) => (x.id === c.id ? { ...x, enabled: v } : x)))} />
+          <button onClick={() => setCals((l) => l.filter((x) => x.id !== c.id))} className="rounded-full p-1 text-ink3 hover:text-danger" aria-label="Remove calendar">
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+
+      <form onSubmit={add} className="flex flex-col gap-2 pt-4 sm:flex-row">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Calendar ID, e.g. you@gmail.com or …@group.calendar.google.com"
+          className="input flex-1 font-mono text-xs"
+        />
+        <Button icon={Plus} disabled={!input.trim() || adding}>
+          {adding ? 'Checking…' : 'Add calendar'}
+        </Button>
+      </form>
+
+      <button onClick={() => setHelp((h) => !h)} className="mt-3 inline-flex items-center gap-1 text-xs text-ink3 hover:text-ink2">
+        <ChevronDown size={12} className={cx('transition', help && 'rotate-180')} /> How to connect a calendar
+      </button>
+      {help && (
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-ink2">
+          <li>
+            Open <b className="text-ink">Google Calendar</b> on a computer → ⚙️ <b className="text-ink">Settings</b> → click your calendar on the left.
+          </li>
+          <li>
+            Under <b className="text-ink">Access permissions for events</b>, tick <b className="text-ink">Make available to public</b> and choose <b className="text-ink">See all event details</b>.
+          </li>
+          <li>
+            Scroll to <b className="text-ink">Integrate calendar</b> and copy the <b className="text-ink">Calendar ID</b> (your Gmail address for your main calendar).
+          </li>
+          <li>Paste it above. Repeat for any other calendar in your account.</li>
+          <li className="text-ink3">Public means anyone who knows the ID can see those events. Use a separate calendar for anything private.</li>
+        </ol>
+      )}
+    </Card>
+  );
+}
 
 function CloudCard() {
   const { cloud, toast } = useApp();
@@ -319,18 +428,10 @@ export default function Settings() {
         </Row>
       </Card>
 
+      <GoogleCalendarCard />
+
       <Card className="mb-4">
         <CardHeader title="Integrations" />
-        <Row
-          label={
-            <span className="inline-flex items-center gap-2">
-              <CalendarDays size={14} className="text-ink3" /> Google Calendar sync
-            </span>
-          }
-          hint="Show your Google events on the Calendar page."
-        >
-          <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[11px] text-ink3">Coming soon</span>
-        </Row>
         <Row
           label={
             <span className="inline-flex items-center gap-2">

@@ -3,6 +3,7 @@ import { ACCENTS, DATA_VERSION, PR_LIFTS, defaultSettings, emptyData, workoutTem
 import { computeGap } from './lib/courses';
 import { TODAY, addDays, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
 import { useCloudSync } from './lib/cloud/sync';
+import { useGoogleCalendar } from './lib/useGoogleCalendar';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -192,6 +193,7 @@ export function AppProvider({ children }) {
   };
 
   const cloud = useCloudSync({ snapshot, applyAll: applyPartial });
+  const gcal = useGoogleCalendar(settings.gcalCalendars || [], settings.weekStartsOn);
 
   const applyData = (raw) => {
     const d = normalize(raw);
@@ -445,7 +447,7 @@ export function AppProvider({ children }) {
     }
     const candidateStarts = ['08:30', '13:00', '16:00', '18:00', '19:00', '21:00'];
     const created = [];
-    const all = [...timeBlocks];
+    const all = [...timeBlocks, ...gcal.events.filter((ev) => !ev.allDay)]; // Google events count as busy
     const now = nowMin();
     for (let i = 0; i < 7 && created.length < 6 && queue.length; i++) {
       const date = addDays(TODAY, i);
@@ -477,10 +479,10 @@ export function AppProvider({ children }) {
         created.push(block);
       }
     }
-    setTimeBlocks(all);
+    setTimeBlocks((bs) => [...bs, ...created]);
     const atRisk = tasks.filter((t) => t.status !== 'done' && ((t.doDate && t.doDate < TODAY) || (t.dueDate && t.dueDate < TODAY))).length;
     toast(`Filled ${created.length} free slot${created.length === 1 ? '' : 's'} · ${atRisk} deadline${atRisk === 1 ? '' : 's'} at risk`, {
-      sub: 'Protected blocks stayed untouched.',
+      sub: gcal.events.length ? 'Protected blocks and Google events stayed untouched.' : 'Protected blocks stayed untouched.',
       ms: 4200,
     });
     return created;
@@ -592,7 +594,7 @@ export function AppProvider({ children }) {
     notifications, markNotifs,
     settings, setSettings, accents: ACCENTS,
     tutorialDone, dismissTip, restartTutorial,
-    snapshot, importData, resetData, saveError, cloud,
+    snapshot, importData, resetData, saveError, cloud, gcal,
     toasts, toast, dismissToast,
     derived,
     fmtShort,

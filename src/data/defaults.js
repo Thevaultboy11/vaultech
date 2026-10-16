@@ -36,6 +36,7 @@ export const defaultSettings = {
   readingDays: 14,
   readingYearGoal: 26,
   tutorial: true,
+  gcalCalendars: [], // [{ id, name, color, enabled }] — public Google calendars to show
 };
 
 export const workoutTemplates = {

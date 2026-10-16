@@ -38,6 +38,7 @@ export const TIPS = {
       'Creative blocks are protected — Auto-Plan never overwrites them.',
       'Pick an unscheduled task on the right, then click a slot to place it.',
       'Auto-Plan fills free hours with your highest-priority unscheduled tasks.',
+      'Add your Google Calendar in Settings and its events show here (dashed outline, read-only).',
     ],
   },
   courses: {

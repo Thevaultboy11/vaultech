@@ -58,6 +58,24 @@ node test/mockServer.mjs            # in one terminal: a local stand-in for Fire
 CLOUD_MOCK=1 npm run dev            # in another: the app, pointed at the stand-in
 ```
 
+## Google Calendar (read-only, no sign-in)
+
+The Calendar page can show events from your Google calendars, using the API key in `src/googleConfig.js`.
+
+- **An API key can only read *public* calendars.** For each calendar you want to show:
+  1. Open Google Calendar on a computer → ⚙️ **Settings** → click the calendar on the left.
+  2. Under **Access permissions for events**, tick **Make available to public**, with **See all event details**.
+  3. Under **Integrate calendar**, copy the **Calendar ID**. For your main calendar it's your Gmail address.
+  4. In the app, go to **Settings → Google Calendar** and paste the ID. You can add several calendars.
+- **"Public" means anyone who knows the calendar ID can see its events.** Keep private things in a calendar you don't add here.
+- **Events are read-only.** They show with a dashed outline. **Today** and **Auto-Plan** treat them as busy time.
+- **Events refresh** every 10 minutes, when you come back to the tab, or with the Refresh button.
+- **Events are not saved to Firestore.** Only the list of calendar IDs is synced, so the cloud document stays tiny.
+
+**Protect the API key** (it's in a public repo): Google Cloud Console → **APIs & Services → Credentials** → your key.
+- Under **Application restrictions**, choose **Websites** and add `http://localhost:5173/*`, plus your site's address if you host it.
+- Under **API restrictions**, choose **Restrict key** and select **Google Calendar API** only.
+
 ## Where your data lives
 
 Everything is stored as **one JSON object** in your browser’s `localStorage`, under the key `vault-tech-industries:data`, and synced to Firestore (above). It saves automatically a moment after every change.
@@ -125,6 +143,6 @@ firestore.rules, firebase.json, .firebaserc   Firestore rules + CLI deploy confi
 
 ## Not included (yet)
 
-- **Google Calendar sync** — planned; shown as “Coming soon” in Settings
+- Private Google calendars (that would need Google sign-in) and writing blocks back to Google Calendar
 - iOS Shortcuts webhook — planned
 - App blocking — out of scope; use Opal or one sec
