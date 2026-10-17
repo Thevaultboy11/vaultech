@@ -8,14 +8,28 @@ const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
 export const gcalConfigured = Boolean(GOOGLE_CALENDAR_API_KEY);
 
+// Google's "?cid=" share links carry the calendar ID base64-encoded
+function decodeCid(cid) {
+  if (cid.includes('@')) return cid;
+  try {
+    const b = cid.replace(/-/g, '+').replace(/_/g, '/');
+    const out = atob(b + '='.repeat((4 - (b.length % 4)) % 4));
+    return out.includes('@') ? out : cid;
+  } catch {
+    return cid;
+  }
+}
+
 // Accepts a calendar ID, an email, or a pasted "public URL"/embed link and returns the ID.
 export function cleanCalendarId(input) {
   let s = (input || '').trim();
   try {
     if (/^https?:\/\//.test(s)) {
       const u = new URL(s);
-      const src = u.searchParams.get('src') || u.searchParams.get('cid');
+      const src = u.searchParams.get('src');
+      const cid = u.searchParams.get('cid');
       if (src) s = src;
+      else if (cid) s = decodeCid(cid);
       else {
         const m = u.pathname.match(/\/ical\/([^/]+)\//);
         if (m) s = m[1];

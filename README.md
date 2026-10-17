@@ -67,6 +67,8 @@ The Calendar page can show events from your Google calendars, using the API key 
   2. Under **Access permissions for events**, tick **Make available to public**, with **See all event details**.
   3. Under **Integrate calendar**, copy the **Calendar ID**. For your main calendar it's your Gmail address.
   4. In the app, go to **Settings → Google Calendar** and paste the ID. You can add several calendars.
+- **Two calendars are built in** (`src/googleConfig.js`): the shared `c_2ac9…@group.calendar.google.com` calendar and `dd4017@nyu.edu`. They're added on first launch. You can turn them off or remove them in Settings.
+- You can also paste a Google share link (`…?cid=…`) instead of the ID. The app decodes it.
 - **"Public" means anyone who knows the calendar ID can see its events.** Keep private things in a calendar you don't add here.
 - **Events are read-only.** They show with a dashed outline. **Today** and **Auto-Plan** treat them as busy time.
 - **Events refresh** every 10 minutes, when you come back to the tab, or with the Refresh button.

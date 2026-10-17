@@ -4,6 +4,7 @@ import { computeGap } from './lib/courses';
 import { TODAY, addDays, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
 import { useCloudSync } from './lib/cloud/sync';
 import { useGoogleCalendar } from './lib/useGoogleCalendar';
+import { BUILT_IN_CALENDARS } from './googleConfig';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -194,6 +195,17 @@ export function AppProvider({ children }) {
 
   const cloud = useCloudSync({ snapshot, applyAll: applyPartial });
   const gcal = useGoogleCalendar(settings.gcalCalendars || [], settings.weekStartsOn);
+
+  // Add the built-in Google calendars once (afterwards your Settings choices win, also across devices)
+  useEffect(() => {
+    if (settings.gcalSeeded) return;
+    setSettings((s) => {
+      if (s.gcalSeeded) return s;
+      const have = new Set((s.gcalCalendars || []).map((c) => c.id));
+      const add = BUILT_IN_CALENDARS.filter((c) => !have.has(c.id)).map((c) => ({ ...c, enabled: true }));
+      return { ...s, gcalCalendars: [...(s.gcalCalendars || []), ...add], gcalSeeded: true };
+    });
+  }, [settings.gcalSeeded]);
 
   const applyData = (raw) => {
     const d = normalize(raw);
