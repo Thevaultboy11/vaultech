@@ -3,14 +3,10 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ── Vault Tech Industries ──────────────────────────────────────────
-    // The whole app is one small document: vaultech/{vaultKey}
-    // No sign-in: the long random vault key is the password.
-    // "get" (not "read") means nobody can list the collection to find keys.
-    match /vaultech/{vault} {
-      allow get, delete: if vault.size() >= 24;
-      allow create, update: if vault.size() >= 24
-        && request.resource.data.json is string
-        && request.resource.data.json.size() < 1000000;
+    // One document per signed-in account: vaultech/{uid}
+    // You can only read or write your own document.
+    match /vaultech/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
     // If other apps in this project (e.g. Clocky Clone) need rules,

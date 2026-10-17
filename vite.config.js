@@ -8,7 +8,14 @@ const backend = process.env.CLOUD_MOCK ? './test/mockBackend.js' : './src/lib/cl
 
 export default defineConfig({
   plugins: [react()],
-  build: { chunkSizeWarningLimit: 700 }, // the lazily-loaded Firestore SDK chunk is ~600 kB
+  build: {
+    chunkSizeWarningLimit: 800, // the Firebase SDK chunk is ~700 kB
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => (id.includes('node_modules/firebase') || id.includes('node_modules/@firebase') ? 'firebase' : undefined),
+      },
+    },
+  },
   resolve: {
     alias: { '@cloud-backend': fileURLToPath(new URL(backend, import.meta.url)) },
   },

@@ -1,242 +1,139 @@
-// Cloud sync without sign-in — kept deliberately small.
+// Saves the whole app to ONE Firestore document per account (vaultech/{uid}).
 //
-// The whole app is ONE Firestore document:  vaultech/{vaultKey}  →  { json, updatedAt, device }
-// `json` is the same JSON object you get from Settings → Export (usually a few KB).
-// The vault key is a long random string that works like a password.
-//
-// Writes only happen when something actually changed, at most once every 2 seconds.
-// If two devices edit at once, the most recent change wins.
+// - Writes only when your data actually changed, at most once every 2 seconds.
+// - Opening the app, reloading or switching devices never writes on its own.
+// - Changes made on another device arrive live; if both changed, the newest wins.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as backend from '@cloud-backend';
 
-const SYNC_STORAGE = 'vault-tech-industries:sync';
 const DEBOUNCE_MS = 2000;
-const MAX_BYTES = 900_000; // Firestore's limit is 1 MiB per document
+const MAX_BYTES = 900_000; // Firestore limit is 1 MiB per document
 
-export const cloudConfigured = backend.configured;
-
-function hash(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return `${s.length}:${h >>> 0}`;
-}
-
-export function newVaultKey() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-  const bytes = new Uint8Array(28);
-  crypto.getRandomValues(bytes);
-  return 'vt-' + Array.from(bytes, (b) => chars[b % chars.length]).join('');
-}
-export const normalizeKey = (k) => (k || '').trim().replace(/\s+/g, '');
-export const validKey = (k) => /^[A-Za-z0-9_-]{24,100}$/.test(normalizeKey(k));
-
-function loadMeta() {
-  try {
-    const m = JSON.parse(localStorage.getItem(SYNC_STORAGE) || 'null');
-    if (m && typeof m === 'object' && 'vault' in m) return { synced: null, changedAt: 0, ...m };
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-function saveMeta(m) {
-  try {
-    localStorage.setItem(SYNC_STORAGE, JSON.stringify(m));
-  } catch {
-    /* ignore */
-  }
-}
-
-function friendlyError(err) {
+export function friendlyError(err) {
   const code = err?.code || '';
   if (code.includes('permission-denied'))
-    return 'Firestore refused access. Add the vaultech rule in Firebase → Firestore → Rules (see README).';
-  if (code.includes('unavailable')) return 'Can’t reach Firestore right now. Changes are kept and will sync later.';
-  if (code.includes('not-found') || code.includes('failed-precondition'))
-    return 'No Firestore database found in the project. Create one in Firebase → Firestore.';
+    return 'Firestore refused access. Update the rules in Firebase → Firestore → Rules (see README).';
+  if (code.includes('unavailable')) return 'You’re offline. Changes are kept and will save when you’re back.';
+  if (code.includes('not-found') || code.includes('failed-precondition')) return 'No Firestore database found. Create one in Firebase → Firestore.';
   if (code.includes('resource-exhausted')) return 'Firestore free quota reached for today.';
-  return err?.message || 'Sync error';
+  if (code.includes('unauthorized-domain')) return 'This address isn’t allowed to sign in. Add it in Firebase → Authentication → Settings → Authorized domains.';
+  if (code.includes('operation-not-allowed')) return 'Google sign-in is turned off. Enable it in Firebase → Authentication → Sign-in method.';
+  if (code.includes('popup-closed') || code.includes('cancelled-popup')) return null;
+  if (code.includes('popup-blocked')) return 'Your browser blocked the sign-in pop-up. Allow pop-ups for this site and try again.';
+  return err?.message || 'Something went wrong';
 }
 
-/**
- * snapshot: the full app data object (from the store)
- * applyAll(obj): replaces the app data with obj
- */
-export function useCloudSync({ snapshot, applyAll }) {
-  const [meta, setMetaState] = useState(() => {
-    const m = loadMeta();
-    if (m) return m;
-    // First run: new, empty vault with sync on.
-    const fresh = { vault: backend.configured ? newVaultKey() : null, synced: null, changedAt: 0, device: newVaultKey().slice(3, 11) };
-    saveMeta(fresh);
-    return fresh;
-  });
-  const metaRef = useRef(meta);
-  const setMeta = (m) => {
-    metaRef.current = m;
-    saveMeta(m);
-    setMetaState(m);
-  };
-  const patchMeta = (p) => {
-    metaRef.current = { ...metaRef.current, ...p };
-    saveMeta(metaRef.current);
-  };
-
-  const [status, setStatus] = useState(meta.vault ? 'connecting' : 'off');
+export function useProfileSync({ uid, snapshot, applyAll, initialUpdatedAt, needsUpload }) {
+  const [status, setStatus] = useState('synced'); // synced | saving | offline | error
   const [error, setError] = useState(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState(null);
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
 
   const json = JSON.stringify(snapshot);
   const jsonRef = useRef(json);
   jsonRef.current = json;
+  const savedJson = useRef(needsUpload ? null : json); // what the cloud has
+  const lastUpdatedAt = useRef(initialUpdatedAt || 0);
+  const changedAt = useRef(0);
+  const applyingRemote = useRef(false);
   const applyRef = useRef(applyAll);
   applyRef.current = applyAll;
-  const ready = useRef(false);
-  const lastJson = useRef(json);
   const timer = useRef(null);
+  const saving = useRef(false);
 
   const flush = useCallback(async () => {
-    const m = metaRef.current;
-    if (!m.vault || !ready.current) return;
-    const vault = m.vault;
     const body = jsonRef.current;
-    const h = hash(body);
-    if (m.synced === h) return; // nothing new
+    if (body === savedJson.current || saving.current) return;
     if (body.length > MAX_BYTES) {
       setStatus('error');
-      setError('Your data is over 900 KB, too big for one Firestore document. Export a backup and remove old entries.');
+      setError('Your data is over 900 KB, too big for one document. Export a backup and delete old entries.');
       return;
     }
-    setStatus('syncing');
+    saving.current = true;
+    setStatus('saving');
+    const updatedAt = Date.now();
     try {
-      await backend.write(vault, { json: body, updatedAt: Date.now(), device: m.device });
-      if (metaRef.current.vault === vault) patchMeta({ synced: h });
+      await backend.save(uid, { data: JSON.parse(body), updatedAt });
+      savedJson.current = body;
+      lastUpdatedAt.current = updatedAt;
+      setLastSavedAt(new Date());
       setError(null);
-      setLastSyncedAt(new Date());
       setStatus('synced');
     } catch (err) {
       setError(friendlyError(err));
-      setStatus('error');
+      setStatus(err?.code?.includes('unavailable') ? 'offline' : 'error');
       clearTimeout(timer.current);
-      timer.current = setTimeout(flush, 30000); // retry later
+      timer.current = setTimeout(flush, 30000);
+    } finally {
+      saving.current = false;
+      if (jsonRef.current !== savedJson.current && !timer.current) schedule();
     }
-  }, []);
+  }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const schedule = useCallback(
     (ms = DEBOUNCE_MS) => {
       clearTimeout(timer.current);
-      timer.current = setTimeout(flush, ms);
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        flush();
+      }, ms);
     },
     [flush]
   );
 
-  // Listen to the vault document (fires once on load, then on every change from any device)
+  // Local change → save (debounced). Remote-applied changes are not saved back.
   useEffect(() => {
-    const vault = meta.vault;
-    ready.current = false;
-    if (!vault || !backend.configured) {
-      setStatus('off');
+    if (applyingRemote.current) {
+      applyingRemote.current = false;
+      savedJson.current = json;
       return;
     }
-    setStatus('connecting');
-    setError(null);
-    lastJson.current = jsonRef.current;
+    if (json === savedJson.current) return;
+    changedAt.current = Date.now();
+    schedule();
+  }, [json, schedule]);
 
-    const unsub = backend.subscribe(
-      vault,
-      (data) => {
-        if (metaRef.current.vault !== vault) return;
-        const local = jsonRef.current;
-        const lh = hash(local);
-        const m = metaRef.current;
-        if (data && typeof data.json === 'string') {
-          const rh = hash(data.json);
-          if (rh === lh) patchMeta({ synced: rh });
-          else {
-            const localDirty = m.synced !== lh;
-            const localNewer = (m.changedAt || 0) > (data.updatedAt || 0);
-            if (!(localDirty && localNewer)) {
-              // Cloud copy wins
-              patchMeta({ synced: rh });
-              lastJson.current = data.json;
-              try {
-                applyRef.current(JSON.parse(data.json));
-              } catch {
-                /* ignore malformed */
-              }
-              setLastSyncedAt(new Date());
-            }
-          }
-        }
-        const first = !ready.current;
-        ready.current = true;
-        if (first) setStatus((s) => (s === 'connecting' ? 'synced' : s));
-        schedule(first ? 100 : DEBOUNCE_MS); // uploads only if local differs
+  // Live updates from your other devices
+  useEffect(() => {
+    const unsub = backend.watch(
+      uid,
+      (doc, pending) => {
+        if (pending || !doc || !doc.data) return;
+        if ((doc.updatedAt || 0) <= lastUpdatedAt.current) return; // our own save, or old
+        const localDirty = jsonRef.current !== savedJson.current;
+        if (localDirty && changedAt.current > doc.updatedAt) return; // ours is newer; it will save
+        lastUpdatedAt.current = doc.updatedAt;
+        applyingRemote.current = true;
+        applyRef.current(doc.data);
       },
       (err) => {
         setError(friendlyError(err));
         setStatus('error');
       }
     );
-    return () => {
-      if (unsub) unsub();
-      clearTimeout(timer.current);
-    };
-  }, [meta.vault, schedule]);
+    return () => unsub && unsub();
+  }, [uid]);
 
-  // Local change → remember when, queue one upload
-  useEffect(() => {
-    if (json === lastJson.current) return;
-    lastJson.current = json;
-    patchMeta({ changedAt: Date.now() });
-    if (metaRef.current.vault && ready.current) schedule();
-  }, [json, schedule]);
-
-  // Online/offline
   useEffect(() => {
     const on = () => {
-      setOnline(true);
+      setStatus((s) => (s === 'offline' ? 'saving' : s));
       schedule(300);
     };
-    const off = () => setOnline(false);
+    const off = () => setStatus('offline');
     window.addEventListener('online', on);
     window.addEventListener('offline', off);
+    // save right away if the tab is being closed with unsaved changes
+    const hide = () => {
+      if (document.visibilityState === 'hidden' && jsonRef.current !== savedJson.current) flush();
+    };
+    document.addEventListener('visibilitychange', hide);
     return () => {
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
+      document.removeEventListener('visibilitychange', hide);
     };
-  }, [schedule]);
+  }, [schedule, flush]);
 
-  // ── Actions for Settings ──
-  const connect = (key) => {
-    const vault = normalizeKey(key);
-    if (!validKey(vault)) return false;
-    setMeta({ ...metaRef.current, vault, synced: null, changedAt: 0 }); // cloud copy wins
-    return true;
-  };
-  const freshVault = async () => {
-    const old = metaRef.current.vault;
-    setMeta({ ...metaRef.current, vault: null });
-    if (old) await backend.remove(old).catch(() => {});
-    setMeta({ ...metaRef.current, vault: newVaultKey(), synced: null, changedAt: 0 });
-  };
-  const disconnect = () => setMeta({ ...metaRef.current, vault: null, synced: null, changedAt: 0 });
-  const enable = () => setMeta({ ...metaRef.current, vault: newVaultKey(), synced: null, changedAt: 0 });
-  const syncNow = () => schedule(0);
+  useEffect(() => () => clearTimeout(timer.current), []);
 
-  return {
-    configured: backend.configured,
-    backendName: backend.backendName,
-    vault: meta.vault,
-    status: meta.vault && !online && status !== 'error' ? 'offline' : status,
-    error,
-    lastSyncedAt,
-    sizeKb: Math.max(1, Math.round(json.length / 1024)),
-    connect,
-    freshVault,
-    disconnect,
-    enable,
-    syncNow,
-  };
+  return { status, error, lastSavedAt, saveNow: () => schedule(0) };
 }

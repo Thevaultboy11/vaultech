@@ -2,15 +2,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ACCENTS, DATA_VERSION, PR_LIFTS, defaultSettings, emptyData, workoutTemplates } from './data/defaults';
 import { computeGap } from './lib/courses';
 import { TODAY, addDays, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
-import { useCloudSync } from './lib/cloud/sync';
+import { useProfileSync } from './lib/cloud/sync';
+import { cacheKey } from './components/AuthGate';
 import { useGoogleCalendar } from './lib/useGoogleCalendar';
 import { BUILT_IN_CALENDARS } from './googleConfig';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
-// Everything lives in one JSON object in localStorage under this key.
-export const STORAGE_KEY = 'vault-tech-industries:data';
+// Everything lives in ONE Firestore document per account (see lib/cloud/sync.js).
+// A copy is also cached in this browser so the app can open offline.
 
 let uid = 0;
 export const newId = (p) => `${p}${Date.now().toString(36)}${(++uid).toString(36)}`;
@@ -29,14 +30,6 @@ function normalize(raw) {
   return out;
 }
 
-function loadData() {
-  try {
-    const s = localStorage.getItem(STORAGE_KEY);
-    return s ? normalize(JSON.parse(s)) : emptyData();
-  } catch {
-    return emptyData();
-  }
-}
 
 // ── Habit helpers (habits store the dates they were completed) ──
 export function habitDone(h, date = TODAY) {
@@ -102,9 +95,9 @@ export function readingPace(book, targetDays = 14) {
   };
 }
 
-export function AppProvider({ children }) {
+export function AppProvider({ children, session }) {
   const initial = useRef(null);
-  if (!initial.current) initial.current = loadData();
+  if (!initial.current) initial.current = normalize(session.data);
   const I = initial.current;
 
   const [activeView, setActiveView] = useState('dashboard');
@@ -157,7 +150,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+        localStorage.setItem(cacheKey(session.user.uid), JSON.stringify(snapshot));
         setSaveError(false);
       } catch {
         setSaveError(true);
@@ -193,7 +186,13 @@ export function AppProvider({ children }) {
     if ('courses' in part) setSelectedCourseId((cur) => (arr(part.courses).some((c) => c.id === cur) ? cur : arr(part.courses)[0]?.id || null));
   };
 
-  const cloud = useCloudSync({ snapshot, applyAll: applyPartial });
+  const cloud = useProfileSync({
+    uid: session.user.uid,
+    snapshot,
+    applyAll: applyPartial,
+    initialUpdatedAt: session.updatedAt,
+    needsUpload: session.needsUpload,
+  });
   const gcal = useGoogleCalendar(settings.gcalCalendars || [], settings.weekStartsOn);
 
   // Add the built-in Google calendars once (afterwards your Settings choices win, also across devices)
@@ -607,6 +606,7 @@ export function AppProvider({ children }) {
     settings, setSettings, accents: ACCENTS,
     tutorialDone, dismissTip, restartTutorial,
     snapshot, importData, resetData, saveError, cloud, gcal,
+    account: session.user, signOut: session.signOut,
     toasts, toast, dismissToast,
     derived,
     fmtShort,

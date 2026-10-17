@@ -1,47 +1,43 @@
-// The only file that talks to Firebase. One document per vault: vaultech/{vaultKey}.
-// The Firebase SDK is loaded lazily so the app itself opens instantly.
+// The only file that talks to Firebase.
+// Google sign-in (Firebase Auth) + ONE Firestore document per account:  vaultech/{uid}
+//   { data: { profile, settings, tasks: [...], courses: [...], ... }, updatedAt, email }
+import { initializeApp } from 'firebase/app';
+import { GoogleAuthProvider, getAuth, onAuthStateChanged, signInWithPopup, signOut as fbSignOut } from 'firebase/auth';
+import { doc, getDoc, initializeFirestore, onSnapshot, setDoc } from 'firebase/firestore';
 import { ROOT_COLLECTION, firebaseConfig } from '../../firebaseConfig';
 
-let sdk = null;
-function load() {
-  if (!sdk)
-    sdk = Promise.all([import('firebase/app'), import('firebase/firestore')]).then(([app, fs]) => ({
-      fs,
-      db: fs.getFirestore(app.initializeApp(firebaseConfig)),
-    }));
-  return sdk;
-}
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+// ignoreUndefinedProperties: optional fields that are `undefined` are simply skipped
+const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
 
-const ref = ({ fs, db }, vault) => fs.doc(db, ROOT_COLLECTION, vault);
+const ref = (uid) => doc(db, ROOT_COLLECTION, uid);
+const toUser = (u) => u && { uid: u.uid, email: u.email || '', name: u.displayName || '', photo: u.photoURL || '' };
 
 export const backendName = 'Firestore';
-export const configured = Boolean(firebaseConfig.projectId);
 
-export function subscribe(vault, onData, onError) {
-  let unsub = null;
-  let stopped = false;
-  load()
-    .then((s) => {
-      if (stopped) return;
-      unsub = s.fs.onSnapshot(
-        ref(s, vault),
-        (snap) => onData(snap.exists() ? snap.data() : null),
-        (err) => onError(err)
-      );
-    })
-    .catch(onError);
-  return () => {
-    stopped = true;
-    if (unsub) unsub();
-  };
+export function onAuth(cb) {
+  return onAuthStateChanged(auth, (u) => cb(toUser(u)));
 }
 
-export async function write(vault, payload) {
-  const s = await load();
-  return s.fs.setDoc(ref(s, vault), payload);
+export async function signIn() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  await signInWithPopup(auth, provider);
 }
 
-export async function remove(vault) {
-  const s = await load();
-  return s.fs.deleteDoc(ref(s, vault));
+export const signOut = () => fbSignOut(auth);
+
+export async function load(uid) {
+  const snap = await getDoc(ref(uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+// Fires when the document changes (e.g. from your other device)
+export function watch(uid, onData, onError) {
+  return onSnapshot(ref(uid), (snap) => onData(snap.exists() ? snap.data() : null, snap.metadata.hasPendingWrites), onError);
+}
+
+export function save(uid, payload) {
+  return setDoc(ref(uid), payload);
 }

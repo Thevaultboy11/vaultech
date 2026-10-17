@@ -2,7 +2,7 @@
 
 A personal productivity platform for school, work and life — courses with a **baseline gap tracker**, a daily plan, tasks, a week calendar, habits, reading, gym, focus timer, screen time, a sales pipeline and an arbitrage board.
 
-It runs in your browser with no account. Everything you enter is saved on your device and synced to Firebase Firestore.
+You sign in with Google, and everything is saved to one Firestore document in your account, so it's the same on every device.
 
 ## Run it
 
@@ -24,38 +24,42 @@ The app starts **empty**. **Tutorial mode** is on by default:
 
 Dismiss tips one by one with **Got it**, or turn the whole thing off in **Settings → Tutorial mode**. **Restart tutorial** brings every tip back.
 
-## Cloud sync (Firebase Firestore)
+## Sign-in and saving (Firebase)
 
-Your data also syncs to Firestore in the `vaultboy-projecet` Firebase project, so it's backed up and shared between your devices. There's **no sign-in**, and it's kept small:
+The app opens on a **Continue with Google** screen. Once you're signed in, everything is saved to **one Firestore document for your account**:
 
-- **The whole app is one document,** `vaultech/{vaultKey}`. It's one JSON string (the same as Settings → Export), usually a few KB.
-- **Writes only happen when something changed,** at most once every 2 seconds.
-- **The vault key is created automatically** on first open: a long random code like `vt-…`. It works like a password, so don't share it.
-- **To use the same data on another device,** copy the key from **Settings → Cloud sync** and paste it under **Connect to another device's vault** on the other device.
-- **Other open devices update live.** If two devices change something at the same time, the most recent change wins.
-- **Offline, the app keeps working** and syncs when you're back online.
-
-### One-time Firestore rules
-
-Pick one of the two ways.
-
-**Console (safest if other apps use this project):** go to Firebase → Firestore → **Rules**. Add the `match /vaultech/{vault}` block from [`firestore.rules`](firestore.rules) next to your existing rules, then click **Publish**.
-
-**CLI (fast):** this **replaces all** Firestore rules in the project with `firestore.rules`. Only use it if no other app (e.g. Clocky Clone) needs its own rules, or add those rules to the file first.
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase deploy --only firestore:rules
+```
+vaultech/{your account id}
+  data:      { profile, settings, tasks: [...], courses: [...], habits: [...], ... }
+  updatedAt: 1792…
 ```
 
-Until the rule is published, the cloud icon shows "Sync problem" and the app keeps saving locally. The web config lives in `src/firebaseConfig.js`. These values are public by design; the rules protect the data.
+- **No document is created until you sign in,** and never more than one per account.
+- **Opening the app, reloading or using another device doesn't write anything.**
+- **It writes only when you change something.** Quick edits are batched, at most one save every 2 seconds.
+- **Your other devices update live.** A copy is also cached in the browser so the app opens if you're offline.
+- **Settings → Account** shows who's signed in and has **Sign out**. A small icon appears in the top bar only if saving has a problem or you're offline.
 
-### Testing sync without touching real data
+### One-time Firebase setup
+
+1. **Authentication → Sign-in method → Google → Enable** (pick your support email) → Save. `localhost` is already an authorized domain. If you host the app somewhere, add that address under **Authentication → Settings → Authorized domains**.
+2. **Firestore → Rules:** replace the old `vaultech` block with the one in [`firestore.rules`](firestore.rules), then click **Publish**:
+   ```
+   match /vaultech/{uid} {
+     allow read, write: if request.auth != null && request.auth.uid == uid;
+   }
+   ```
+3. Optional cleanup: delete the old `vt-…` documents in the `vaultech` collection. They came from the earlier no-sign-in version and aren't used anymore.
+
+If you had data in this browser from before sign-in existed, it's moved into your account the first time you sign in.
+
+The Firebase web config is in `src/firebaseConfig.js`. These values are public by design; the rules protect the data.
+
+### Testing without touching real data
 
 ```bash
-node test/mockServer.mjs            # in one terminal: a local stand-in for Firestore
-CLOUD_MOCK=1 npm run dev            # in another: the app, pointed at the stand-in
+node test/mockServer.mjs     # a local stand-in for Firestore that counts writes
+CLOUD_MOCK=1 npm run dev     # the app with a fake sign-in, pointed at the stand-in
 ```
 
 ## Google Calendar (read-only, no sign-in)
@@ -80,13 +84,12 @@ The Calendar page can show events from your Google calendars, using the API key 
 
 ## Where your data lives
 
-Everything is stored as **one JSON object** in your browser’s `localStorage`, under the key `vault-tech-industries:data`, and synced to Firestore (above). It saves automatically a moment after every change.
+Everything is stored in **one Firestore document** for your account (above). It saves automatically a moment after every change.
 
 - **Settings → Your data → Export JSON** downloads a backup (`vault-tech-industries-YYYY-MM-DD.json`).
 - **Import JSON** loads a backup — use it to move to another browser or device.
-- **Erase…** wipes everything on this device and in your cloud vault.
+- **Erase…** wipes everything in your account.
 
-If you turn cloud sync off, data stays only in this browser. Clearing site data or using a private window would then lose it, so export a backup now and then.
 
 ## Pages
 

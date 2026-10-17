@@ -10,6 +10,6 @@ export const firebaseConfig = {
   appId: '1:149287396818:web:2e220da5f70d777007940b',
 };
 
-// All Vault Tech data lives in this collection, separate from anything else in the
-// project. One small document per vault:  vaultech/{vaultKey}
+// All Vault Tech data lives in this collection: ONE document per signed-in account,
+// vaultech/{uid}, holding everything as { data: {...}, updatedAt }.
 export const ROOT_COLLECTION = 'vaultech';

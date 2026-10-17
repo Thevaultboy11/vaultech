@@ -1,31 +1,19 @@
-import { Cloud, CloudOff, Loader2, AlertTriangle, Check } from 'lucide-react';
+import { AlertTriangle, CloudOff } from 'lucide-react';
 import { useApp } from '../../store';
-import { cx } from '../ui';
 
-export const SYNC_LABEL = {
-  off: 'Cloud sync off',
-  connecting: 'Connecting…',
-  syncing: 'Saving to cloud…',
-  synced: 'Saved to cloud',
-  offline: 'Offline — will sync later',
-  error: 'Sync problem',
-};
-
+// Invisible when everything is saved. Only shows up if saving has a problem or you're offline.
 export default function SyncBadge() {
   const { cloud, go } = useApp();
-  const s = cloud.status;
-  const Icon = s === 'off' || s === 'offline' ? CloudOff : s === 'error' ? AlertTriangle : Cloud;
-  const tone = s === 'error' ? 'text-danger' : s === 'offline' || s === 'off' ? 'text-ink3' : s === 'synced' ? 'text-ink2' : 'text-accent';
+  if (cloud.status !== 'error' && cloud.status !== 'offline') return null;
+  const Icon = cloud.status === 'error' ? AlertTriangle : CloudOff;
   return (
     <button
       onClick={() => go('settings')}
-      title={cloud.error || SYNC_LABEL[s]}
-      aria-label={SYNC_LABEL[s]}
-      className={cx('relative flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.05]', tone)}
+      title={cloud.error || 'Offline — changes will save when you’re back'}
+      aria-label={cloud.status === 'error' ? 'Saving problem' : 'Offline'}
+      className={`flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.05] ${cloud.status === 'error' ? 'text-danger' : 'text-warning'}`}
     >
       <Icon size={17} />
-      {(s === 'syncing' || s === 'connecting') && <Loader2 size={9} className="absolute bottom-1.5 right-1.5 animate-spin" />}
-      {s === 'synced' && <Check size={9} strokeWidth={3.5} className="absolute bottom-[7px] right-[7px] text-success" />}
     </button>
   );
 }
