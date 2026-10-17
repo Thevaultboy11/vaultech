@@ -6,6 +6,7 @@ import { useProfileSync } from './lib/cloud/sync';
 import { cacheKey } from './components/AuthGate';
 import { useGoogleCalendar } from './lib/useGoogleCalendar';
 import { BUILT_IN_CALENDARS } from './googleConfig';
+import { SYLLABUS_COURSES, SYLLABUS_VERSION } from './data/syllabi';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -205,6 +206,54 @@ export function AppProvider({ children, session }) {
       return { ...s, gcalCalendars: [...(s.gcalCalendars || []), ...add], gcalSeeded: true };
     });
   }, [settings.gcalSeeded]);
+
+  // Import the Fall 2026 syllabi into the baseline gap tracker — once per account.
+  // Courses you already added (matched by code or name) are filled in, not duplicated;
+  // topics you already have keep their status.
+  const syllabusDone = useRef(false);
+  useEffect(() => {
+    if (settings.syllabusImport === SYLLABUS_VERSION || syllabusDone.current) return;
+    syllabusDone.current = true;
+    const norm = (x) => (x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const added = [];
+    const updated = [];
+    setCourses((cs) => {
+      let next = [...cs];
+      for (const sc of SYLLABUS_COURSES) {
+        const { key, match, topics, ...info } = sc;
+        const keys = match.map(norm);
+        const i = next.findIndex((c) => {
+          const fields = [c.code, c.short, c.name].map(norm).filter(Boolean);
+          return fields.some((f) => keys.some((k) => f === k || f.includes(k)));
+        });
+        if (i === -1) {
+          next.push(computeGap({ ...info, topics: topics.map((t) => ({ ...t })) }));
+          added.push(info.short);
+        } else {
+          const c = next[i];
+          const have = new Set(c.topics.map((t) => norm(t.title)));
+          const extra = topics.filter((t) => !have.has(norm(t.title))).map((t) => ({ ...t, id: `${t.id}-${c.id}` }));
+          next[i] = computeGap({
+            ...c,
+            code: c.code || info.code,
+            name: c.name || info.name,
+            professor: c.professor || info.professor,
+            schedule: c.schedule || info.schedule,
+            milestone: c.milestone?.date && c.milestone.date >= TODAY ? c.milestone : info.milestone,
+            topics: [...c.topics, ...extra].sort((a, b) => a.classDate.localeCompare(b.classDate)),
+          });
+          updated.push(c.short || c.name);
+        }
+      }
+      return next;
+    });
+    setSelectedCourseId((cur) => cur || 'syl-cso');
+    setSettings((s) => ({ ...s, syllabusImport: SYLLABUS_VERSION }));
+    setTimeout(() => {
+      const parts = [added.length && `added ${added.join(', ')}`, updated.length && `filled in ${updated.join(', ')}`].filter(Boolean);
+      toast('Syllabi imported', { sub: parts.join(' · ') || 'Courses are in the gap tracker', ms: 5000 });
+    }, 300);
+  }, [settings.syllabusImport]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyData = (raw) => {
     const d = normalize(raw);

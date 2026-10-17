@@ -119,6 +119,12 @@ Calc pset every Mon 9am p1 #school
 
 It understands days (`today`, `tonight`, `tomorrow`, `fri`), times (`9am`, `21:00`), `every Mon` / `daily`, `due fri`, priority `p1`–`p4`, `#school` / `#job` / `#arbitrage` / `#misc`, durations (`45m`, `1.5h`), and your own course short names.
 
+### Fall 2026 syllabi (built in)
+
+`src/data/syllabi.js` holds the four Fall 2026 courses: CSO, Calculus, Markets and The Unconscious Mind. That's 98 syllabus topics, each dated by the day it's taught, plus professor, schedule and next milestone.
+
+They're added to your account **once**, the first time you sign in on this version. Courses you already created with the same name or code are filled in rather than duplicated, and topics you already marked keep their status. Every imported topic starts as *not started*, so tick off what you've covered to see your real gap.
+
 ### How the gap works
 
 `gap = (topics already taught that are still "not started") − (future topics you've already covered)`

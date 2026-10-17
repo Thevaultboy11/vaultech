@@ -152,7 +152,7 @@ export default function Dashboard() {
           <span className="hidden text-[11px] text-ink3 sm:inline">Gap is how many syllabus topics you're behind today's class.</span>
         </div>
         {courses.length ? (
-          <div className={cx('grid gap-4', courses.length === 1 ? 'sm:grid-cols-2 lg:grid-cols-3' : courses.length === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-3')}>
+          <div className={cx('grid gap-4', courses.length === 1 ? 'sm:grid-cols-2 lg:grid-cols-3' : courses.length === 2 ? 'sm:grid-cols-2' : courses.length === 4 ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3')}>
             {courses.map((c) => (
               <GapCard key={c.id} course={c} />
             ))}
