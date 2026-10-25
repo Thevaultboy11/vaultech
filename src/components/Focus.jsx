@@ -1,5 +1,4 @@
 import { FastForward, Pause, Play, Sprout, TreePine, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
 import { DOW, TODAY, dow, fmtDur, weekDays } from '../lib/dates';
 import { useApp } from '../store';
 import { BarList } from './charts';
@@ -9,36 +8,13 @@ import { Tip } from './Tutorial';
 const PRESETS = [25, 50];
 
 export default function Focus() {
-  const { courses, tasks, focusSessions, addFocusSession, toast, derived, settings } = useApp();
-  const [length, setLength] = useState(25);
-  const [left, setLeft] = useState(25 * 60);
-  const [state, setState] = useState('idle'); // idle | running | paused
-  const [courseId, setCourseId] = useState('');
-  const [taskId, setTaskId] = useState('');
-  const tick = useRef(null);
-
+  const { courses, tasks, focusSessions, addFocusSession, focusTimer: timer, toast, derived, settings } = useApp();
+  // Timer state lives in the store so it keeps running on other pages and across reloads.
+  const { status: state, length, courseId, taskId } = timer;
+  const left = Math.ceil(timer.left / 1000); // seconds
   const total = length * 60;
   const elapsedMin = Math.round((total - left) / 60);
-
-  useEffect(() => {
-    if (state !== 'running') return;
-    tick.current = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(tick.current);
-  }, [state]);
-
-  useEffect(() => {
-    if (state === 'running' && left === 0) {
-      addFocusSession({ courseId: courseId || null, taskId: taskId || null, minutes: length, completed: true });
-      toast('Tree grown', { sub: `${length} min of ${courses.find((c) => c.id === courseId)?.short || 'focus'}`, tone: 'success' });
-      setState('idle');
-      setLeft(length * 60);
-    }
-  }, [left, state]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const reset = (min = length) => {
-    setState('idle');
-    setLeft(min * 60);
-  };
+  const reset = (min) => timer.reset(min);
 
   const abandon = () => {
     if (elapsedMin > 0) addFocusSession({ courseId: courseId || null, taskId: taskId || null, minutes: elapsedMin, completed: false });
@@ -67,8 +43,7 @@ export default function Focus() {
               value={courseId}
               disabled={state !== 'idle'}
               onChange={(e) => {
-                setCourseId(e.target.value);
-                setTaskId('');
+                timer.setTarget({ courseId: e.target.value, taskId: '' });
               }}
               aria-label="Course"
             >
@@ -79,7 +54,7 @@ export default function Focus() {
                 </option>
               ))}
             </select>
-            <select className="select max-w-[240px]" value={taskId} disabled={state !== 'idle'} onChange={(e) => setTaskId(e.target.value)} aria-label="Task">
+            <select className="select max-w-[240px]" value={taskId} disabled={state !== 'idle'} onChange={(e) => timer.setTarget({ taskId: e.target.value })} aria-label="Task">
               <option value="">No task</option>
               {courseTasks.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -92,8 +67,7 @@ export default function Focus() {
               value={length}
               onChange={(v) => {
                 if (state !== 'idle') return;
-                setLength(v);
-                reset(v);
+                timer.setLength(v);
               }}
               options={PRESETS.map((p) => ({ value: p, label: `${p}m` }))}
             />
@@ -120,11 +94,11 @@ export default function Focus() {
 
           <div className="mt-10 flex items-center gap-3">
             {state === 'running' ? (
-              <Button size="lg" variant="outline" icon={Pause} onClick={() => setState('paused')}>
+              <Button size="lg" variant="outline" icon={Pause} onClick={timer.pause}>
                 Pause
               </Button>
             ) : (
-              <Button size="lg" icon={Play} onClick={() => setState('running')}>
+              <Button size="lg" icon={Play} onClick={timer.start}>
                 {state === 'paused' ? 'Resume' : 'Start'}
               </Button>
             )}
@@ -135,7 +109,7 @@ export default function Focus() {
             )}
           </div>
           {state !== 'idle' && (
-            <button onClick={() => setLeft(3)} className="mt-4 inline-flex items-center gap-1 text-[11px] text-ink3 hover:text-ink2">
+            <button onClick={() => timer.skipTo(3000)} className="mt-4 inline-flex items-center gap-1 text-[11px] text-ink3 hover:text-ink2">
               <FastForward size={11} /> skip to end (demo)
             </button>
           )}

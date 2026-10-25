@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bell, CornerDownLeft, Plus, Sparkles } from 'lucide-react';
+import { Bell, CornerDownLeft, Plus, Sparkles, Timer } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseQuickAdd } from '../../lib/parse';
 import { useApp } from '../../store';
@@ -16,7 +16,7 @@ const EXAMPLES = [
 ];
 
 export default function TopBar() {
-  const { activeView, addTask, notifications, markNotifs, go, courses, profile } = useApp();
+  const { activeView, addTask, notifications, markNotifs, go, courses, profile, focusTimer } = useApp();
   const [q, setQ] = useState('');
   const [focused, setFocused] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
@@ -137,6 +137,17 @@ export default function TopBar() {
           </AnimatePresence>
         </div>
 
+        {focusTimer.status !== 'idle' && activeView !== 'focus' && (
+          <button
+            onClick={() => go('focus')}
+            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line px-3 text-xs tabular-nums text-ink2 transition hover:bg-white/[0.05] hover:text-ink"
+            aria-label="Focus timer"
+          >
+            <Timer size={14} className={focusTimer.status === 'running' ? 'text-success' : 'text-ink3'} />
+            {String(Math.floor(Math.ceil(focusTimer.left / 1000) / 60)).padStart(2, '0')}:
+            {String(Math.ceil(focusTimer.left / 1000) % 60).padStart(2, '0')}
+          </button>
+        )}
         <SyncBadge />
         <div className="relative">
           <button

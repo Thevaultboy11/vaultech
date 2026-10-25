@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ACCENTS, DATA_VERSION, PR_LIFTS, defaultSettings, emptyData, workoutTemplates } from './data/defaults';
 import { computeGap } from './lib/courses';
-import { TODAY, addDays, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
+import { TODAY, addDays, localIso, diffDays, fmtShort, fromMin, nowMin, startOfWeek, toMin } from './lib/dates';
 import { useProfileSync } from './lib/cloud/sync';
+import { useFocusTimer } from './lib/useFocusTimer';
 import { cacheKey } from './components/AuthGate';
 import { useGoogleCalendar } from './lib/useGoogleCalendar';
 import { BUILT_IN_CALENDARS } from './googleConfig';
@@ -459,7 +460,13 @@ export function AppProvider({ children, session }) {
   const deleteLead = (id) => setJobLeads((ls) => ls.filter((l) => l.id !== id));
 
   // ── Focus ──
-  const addFocusSession = (s) => setFocusSessions((fs) => [...fs, { id: newId('f'), date: TODAY, ...s }]);
+  const addFocusSession = (s) => setFocusSessions((fs) => [...fs, { id: newId('f'), date: localIso(), ...s }]);
+  // The running timer lives here (not in the Focus page) so switching pages doesn't stop it.
+  const focusTimer = useFocusTimer(session.user.uid, (done) => {
+    addFocusSession({ courseId: done.courseId || null, taskId: done.taskId || null, minutes: done.length, completed: true });
+    const c = courses.find((x) => x.id === done.courseId);
+    toast('Tree grown', { sub: `${done.length} min of ${c?.short || 'focus'}`, tone: 'success' });
+  });
 
   // ── Screen time ──
   const logScreenTime = (category, min) =>
@@ -647,7 +654,7 @@ export function AppProvider({ children, session }) {
     workouts, addWorkout, deleteWorkout, prs, templates: workoutTemplates,
     deals, addDeal, moveDeal, deleteDeal,
     jobLeads, addLead, moveLead, deleteLead,
-    focusSessions, addFocusSession,
+    focusSessions, addFocusSession, focusTimer,
     screenTimeLogs, logScreenTime,
     timeBlocks, addBlock, addRepeatingBlock, removeBlock, removeSeries, autoPlan,
     weeklyGoals, addGoal, updateGoal, deleteGoal,
