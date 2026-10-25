@@ -1,4 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import doneSoundUrl from '../assets/timer-done.mp3';
+
+// One shared <audio> for the "session finished" sound. Browsers only allow sound after the
+// person has interacted with the page; clicking Start counts, so it plays in normal use.
+let doneSound = null;
+function getDoneSound() {
+  if (!doneSound && typeof Audio !== 'undefined') {
+    doneSound = new Audio(doneSoundUrl);
+    doneSound.preload = 'auto';
+  }
+  return doneSound;
+}
+export function playDoneSound() {
+  const a = getDoneSound();
+  if (!a) return;
+  try {
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {}); // blocked (e.g. no click since a reload): skip quietly
+  } catch {
+    /* ignore */
+  }
+}
 
 // Focus timer that lives in the app store, so it keeps running when you switch pages.
 //
@@ -63,11 +86,13 @@ export function useFocusTimer(uid, onFinish) {
     if (timer.status === 'running' && now >= timer.endsAt) {
       const done = timer;
       setTimer({ ...IDLE, length: done.length, remaining: done.length * 60000, courseId: done.courseId, taskId: done.taskId });
+      playDoneSound();
       finishRef.current?.(done);
     }
   }, [now, timer]);
 
   const start = useCallback(() => {
+    getDoneSound()?.load(); // fetch the sound now so it plays instantly at the end
     setTimer((t) => (t.status === 'running' ? t : { ...t, status: 'running', endsAt: Date.now() + t.remaining }));
     setNow(Date.now());
   }, []);
